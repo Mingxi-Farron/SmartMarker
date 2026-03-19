@@ -17,7 +17,7 @@ export const config = {
   adminKey: process.env.ADMIN_KEY || '',
   aliModelEndpoint: process.env.ALI_MODEL_ENDPOINT || '',
   aliApiKey: process.env.ALI_API_KEY || '',
-  aliVlmModel: process.env.ALI_VLM_MODEL || 'qwen3.5-plus',
+  aliVlmModel: process.env.ALI_VLM_MODEL || 'qwen-vl-plus',
   aliDisableThinking: boolFromEnv('ALI_DISABLE_THINKING', true),
   aliRequestTimeoutMs: Number(process.env.ALI_REQUEST_TIMEOUT_MS || 60000),
   aliMaxTokens: Number(process.env.ALI_MAX_TOKENS || 1200),
