@@ -23,3 +23,18 @@
 | 7 | 部分学生 OCR 失败时不影响已成功的 | P1 | 混入 1-2 张模糊照片 | 其余学生正常出成绩，failed_students 列出失败项 | [ ] 待测 |
 | 8 | 增量追加模式 student_count 累加 | P1 | 先批改一批，再追加一批 | 第二次 result 的 student_count > 第一次 | [ ] 待测 |
 | 9 | hintText prompt 注入防护 | P2 | 传入含指令的 hint_text | VLM 输出不受注入影响，仍返回正常 JSON | [ ] 待测 |
+
+## 2026-03-20 Quiz Agent Phase 4+5
+
+| # | 待测项 | 优先级 | 前置条件 | 通过标准 | 状态 |
+|---|--------|--------|---------|---------|------|
+| 1 | 聊天发"批改过关单"返回两步引导 | P0 | 启动 orchestrator，登录用户 | 收到引导文案，提示上传标准答案 | [ ] 待测 |
+| 2 | 上传答案照片后发消息，自动创建 quiz_key job | P0 | 准备答案照片，先上传再发消息 | job 类型为 quiz_key，status 变为 processing | [ ] 待测 |
+| 3 | quiz_key 完成后说"没问题"，确认答案 | P0 | quiz_key job 完成，前端展示答案预览 | 收到"答案已确认"回复 | [ ] 待测 |
+| 4 | 答案修正 "47:movable" 实际修改 DB | P1 | quiz_key 完成，答案预览中有低置信题 | DB 中对应 question 的 correct_answer 更新 | [ ] 待测 |
+| 5 | REST POST /jobs/quiz-key 创建 job | P1 | 有效 JWT + upload_id | 返回 job_id + status:queued | [ ] 待测 |
+| 6 | REST POST /jobs/quiz-grade 创建 job | P1 | 有效 JWT + upload_id + answer_key_id | 返回 job_id + status:queued | [ ] 待测 |
+| 7 | REST GET /answer-keys 列出用户答案 | P1 | 用户已创建 answer_key | 返回 answer_keys 数组 | [ ] 待测 |
+| 8 | REST DELETE /answer-keys/:id 删除 + CASCADE | P1 | 用户有 answer_key + questions | 删除后 questions 也消失 | [ ] 待测 |
+| 9 | planMainAction 返回 quiz_grade intent 后正确路由 | P1 | 发含 quiz 关键词的模糊消息 | LLM planner 返回 quiz_grade，handleChat 正确 dispatch | [ ] 待测 |
+| 10 | local_file reroute 到 quiz_grade 正常工作 | P2 | 发类似"帮我批改过关单文件"的消息 | 先进入 local_file，reroute 到 quiz_grade | [ ] 待测 |

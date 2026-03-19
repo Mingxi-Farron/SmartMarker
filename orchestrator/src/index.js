@@ -393,6 +393,80 @@ app.post('/jobs/grades', { preHandler: [app.auth] }, async (req, reply) => {
   };
 });
 
+// ─── Quiz endpoints ───
+
+app.post('/jobs/quiz-key', { preHandler: [app.auth] }, async (req, reply) => {
+  const userId = req.user.user_id;
+  const { upload_id, hint_text } = req.body || {};
+  if (!upload_id) {
+    return reply.code(400).send({ error: '缺少 upload_id' });
+  }
+  const upload = db.getUploadWithFiles({ userId, uploadId: upload_id });
+  if (!upload) {
+    return reply.code(404).send({ error: 'upload 不存在' });
+  }
+  const jobId = db.createJob({
+    userId,
+    type: 'quiz_key',
+    input: { upload_id, hint_text: String(hint_text || '').slice(0, 500) }
+  });
+  return { job_id: jobId, status: 'queued' };
+});
+
+app.post('/jobs/quiz-grade', { preHandler: [app.auth] }, async (req, reply) => {
+  const userId = req.user.user_id;
+  const { upload_id, answer_key_id, append_to_result_id } = req.body || {};
+  if (!upload_id) {
+    return reply.code(400).send({ error: '缺少 upload_id' });
+  }
+  if (!answer_key_id) {
+    return reply.code(400).send({ error: '缺少 answer_key_id' });
+  }
+  const upload = db.getUploadWithFiles({ userId, uploadId: upload_id });
+  if (!upload) {
+    return reply.code(404).send({ error: 'upload 不存在' });
+  }
+  const key = db.getAnswerKeyForUser({ userId, answerKeyId: answer_key_id });
+  if (!key) {
+    return reply.code(404).send({ error: 'answer_key_id 不存在' });
+  }
+  if (append_to_result_id) {
+    const qr = db.getQuizResultForUser({ userId, resultId: append_to_result_id });
+    if (!qr) {
+      return reply.code(404).send({ error: 'append_to_result_id 不存在' });
+    }
+  }
+  const input = { upload_id, answer_key_id };
+  if (append_to_result_id) {
+    input.append_to_result_id = append_to_result_id;
+  }
+  const jobId = db.createJob({ userId, type: 'quiz_grade', input });
+  return { job_id: jobId, status: 'queued' };
+});
+
+app.get('/answer-keys', { preHandler: [app.auth] }, async (req) => {
+  const userId = req.user.user_id;
+  return { answer_keys: db.listAnswerKeysForUser({ userId }) };
+});
+
+app.get('/answer-keys/:id', { preHandler: [app.auth] }, async (req, reply) => {
+  const userId = req.user.user_id;
+  const result = db.getAnswerKeyWithQuestions({ userId, answerKeyId: req.params.id });
+  if (!result) {
+    return reply.code(404).send({ error: 'answer_key 不存在' });
+  }
+  return { answer_key: result.answerKey, questions: result.questions };
+});
+
+app.delete('/answer-keys/:id', { preHandler: [app.auth] }, async (req, reply) => {
+  const userId = req.user.user_id;
+  const deleted = db.deleteAnswerKeyForUser({ userId, answerKeyId: req.params.id });
+  if (!deleted) {
+    return reply.code(404).send({ error: 'answer_key 不存在' });
+  }
+  return { ok: true };
+});
+
 app.get('/jobs/:jobId', { preHandler: [app.auth] }, async (req, reply) => {
   const job = db.getJobForUser({
     userId: req.user.user_id,

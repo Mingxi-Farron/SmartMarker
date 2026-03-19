@@ -19,6 +19,10 @@ export class MainAgent {
     if (/ppt|课件|幻灯|投影片/.test(text)) {
       return 'ppt';
     }
+    // quiz_grade must precede grades — "过关单" can co-occur with "成绩"
+    if (/(过关单|批改过关|答案录入|答题卡|批改试卷|上传.*答案|答案.*上传)/.test(text)) {
+      return 'quiz_grade';
+    }
     if (/(成绩|分数|成绩单|平均分|排名|及格率|班级统计|月考|期中|期末|csv|xlsx|xls)/.test(text)) {
       return 'grades';
     }
@@ -1477,6 +1481,7 @@ export class MainAgent {
         plannedFallback?.intent === 'ppt' ||
         plannedFallback?.intent === 'grades' ||
         plannedFallback?.intent === 'essay_review' ||
+        plannedFallback?.intent === 'quiz_grade' ||
         plannedFallback?.intent === 'weather' ||
         plannedFallback?.intent === 'chat'
       ) {
@@ -1589,6 +1594,152 @@ export class MainAgent {
     }
   }
 
+  async handleQuizGradeIntent({ userId, message, context = {}, history = [], sessionId }) {
+    const lastAssistant = history.filter((m) => m.role === 'assistant').pop();
+    const lastContent = lastAssistant?.content || '';
+
+    // Branch 1: Answer confirmation/correction (after "答案已识别")
+    if (lastContent.includes('答案已识别') && context.answer_key_id) {
+      const correctionMatch = message.match(/^(\d+)\s*[:：]\s*(\S+)/);
+      if (correctionMatch) {
+        // Parse all corrections from the message
+        const corrections = [];
+        const lines = message.split(/[,，;\n\s]+/).filter(Boolean);
+        for (const line of lines) {
+          const m = line.match(/^(\d+)\s*[:：]\s*(\S+)/);
+          if (m) {
+            corrections.push({ questionNumber: parseInt(m[1], 10), correctAnswer: m[2] });
+          }
+        }
+        // Apply corrections
+        const keyData = this.db.getAnswerKeyWithQuestions({ userId, answerKeyId: context.answer_key_id });
+      const questions = keyData ? keyData.questions : [];
+        for (const c of corrections) {
+          const q = questions.find((qq) => qq.question_number === c.questionNumber);
+          if (q) {
+            this.db.updateAnswerKeyQuestion({
+              userId,
+              questionId: q.id,
+              correctAnswer: c.correctAnswer,
+              confidence: 1.0,
+            });
+          }
+        }
+        return {
+          intent: 'quiz_grade',
+          reply: `已修正 ${corrections.length} 题。确认无误请说"没问题"。`,
+          action: 'answer_key_corrected',
+        };
+      }
+
+      if (/^(没问题|确认|ok|确定|可以|正确|对的|没错)/i.test(message.trim())) {
+        return {
+          intent: 'quiz_grade',
+          reply: '答案已确认，现在可以上传学生答卷的照片了。',
+          action: 'answer_key_confirmed',
+        };
+      }
+    }
+
+    // Branch 2: Low-confidence review verdict (after "需要你确认")
+    if (lastContent.includes('需要你确认') && context.quiz_result_id && /^(\d{1,2})(\s+\d{1,2}){0,19}$/.test(message.trim())) {
+      // Verify ownership before accessing answers
+      const ownedResult = this.db.getQuizResultForUser({ userId, resultId: context.quiz_result_id });
+      if (!ownedResult) {
+        return { intent: 'quiz_grade', reply: '批改结果不存在。', action: 'quiz_query_not_found' };
+      }
+      const indices = message.trim().split(/\s+/).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+      const lowConf = this.db.getLowConfidenceAnswers({ resultId: context.quiz_result_id, maxConfidence: 0.5 });
+      let correctedCount = 0;
+      for (const idx of indices) {
+        const item = lowConf[idx - 1]; // 1-indexed
+        if (item) {
+          this.db.updateQuizResultAnswer({
+            userId,
+            answerId: item.id,
+            isCorrect: 1,
+            confidence: 1.0,
+          });
+          correctedCount++;
+        }
+      }
+      return {
+        intent: 'quiz_grade',
+        reply: `已将 ${correctedCount} 题标记为正确。`,
+        action: 'review_verdict_applied',
+      };
+    }
+
+    // Branch 3: No upload + has quiz_result_id → query mode (before guidance check)
+    if (!context.upload_id && context.quiz_result_id) {
+      const ownedResult = this.db.getQuizResultForUser({ userId, resultId: context.quiz_result_id });
+      if (!ownedResult) {
+        return { intent: 'quiz_grade', reply: '批改结果不存在。', action: 'quiz_query_not_found' };
+      }
+      const summary = this.db.getQuizResultSummary({ resultId: context.quiz_result_id });
+      return {
+        intent: 'quiz_grade',
+        reply: `批改结果：共 ${summary.student_count} 名学生，平均正确率 ${summary.average_correct_rate ?? 0}%。`,
+        action: 'quiz_query',
+      };
+    }
+
+    // Branch 4: No upload + no answer_key_id → guidance
+    if (!context.upload_id && !context.answer_key_id) {
+      return {
+        intent: 'quiz_grade',
+        reply: '批改过关单需要两步：\n1️⃣ 先上传标准答案的照片（我来识别正确答案）\n2️⃣ 再上传学生答卷的照片（我来逐题批改）\n请先上传标准答案。',
+        action: 'quiz_grade_guidance',
+      };
+    }
+
+    // Branch 5: Has upload + no answer_key_id → create quiz_key job
+    if (context.upload_id && !context.answer_key_id) {
+      const upload = this.db.getUploadWithFiles({ userId, uploadId: context.upload_id });
+      if (!upload) {
+        return { intent: 'quiz_grade', reply: '上传不存在或已失效，请重新上传。', action: 'quiz_upload_missing' };
+      }
+      const jobId = this.db.createJob({
+        userId,
+        type: 'quiz_key',
+        input: { upload_id: context.upload_id, hint_text: String(message || '') },
+      });
+      return {
+        intent: 'quiz_grade',
+        reply: `正在识别答案，请稍候...`,
+        action: 'job_created',
+        job_id: jobId,
+      };
+    }
+
+    // Branch 5: Has upload + has answer_key_id → create quiz_grade job
+    if (context.upload_id && context.answer_key_id) {
+      const upload = this.db.getUploadWithFiles({ userId, uploadId: context.upload_id });
+      if (!upload) {
+        return { intent: 'quiz_grade', reply: '上传不存在或已失效，请重新上传。', action: 'quiz_upload_missing' };
+      }
+      const input = { upload_id: context.upload_id, answer_key_id: context.answer_key_id };
+      if (context.quiz_result_id) {
+        input.append_to_result_id = context.quiz_result_id;
+      }
+      const jobId = this.db.createJob({ userId, type: 'quiz_grade', input });
+      const appendNote = context.quiz_result_id ? '（追加模式）' : '';
+      return {
+        intent: 'quiz_grade',
+        reply: `正在批改${appendNote}，请稍候...`,
+        action: 'job_created',
+        job_id: jobId,
+      };
+    }
+
+    // Fallback to guidance
+    return {
+      intent: 'quiz_grade',
+      reply: '批改过关单需要两步：\n1️⃣ 先上传标准答案的照片（我来识别正确答案）\n2️⃣ 再上传学生答卷的照片（我来逐题批改）\n请先上传标准答案。',
+      action: 'quiz_grade_guidance',
+    };
+  }
+
   async handleChat({ userId, sessionId, message, context = {} }) {
     this.db.createMessage({ userId, sessionId, role: 'user', content: message });
     const history = this.db.listRecentMessagesForSession({ userId, sessionId, limit: 60 });
@@ -1629,6 +1780,13 @@ export class MainAgent {
           history,
           planned,
         }),
+        sessionId,
+      );
+    }
+
+    if (intent === 'quiz_grade') {
+      return this.withSession(
+        await this.handleQuizGradeIntent({ userId, message, context, history, sessionId }),
         sessionId,
       );
     }
@@ -1685,6 +1843,13 @@ export class MainAgent {
           history,
           planned,
         }),
+        sessionId,
+      );
+    }
+
+    if (intent === 'quiz_grade') {
+      return this.withSession(
+        await this.handleQuizGradeIntent({ userId, message, context, history, sessionId }),
         sessionId,
       );
     }
