@@ -69,3 +69,14 @@
 | 8 | "使用之前的答案"列出历史答案列表 | P2 | 用户已创建过 answer key | 列出答案标题和日期，可选择编号 | [ ] 待测 |
 | 9 | 选择历史答案后可直接开始批改 | P2 | 列出历史答案后回复编号 | answer_key_id 被设置，可上传学生卷 | [ ] 待测 |
 | 10 | 引导文案提示"已有保存的答案" | P2 | 用户已创建过 answer key | 引导回复含"已有保存的答案" | [ ] 待测 |
+
+## 2026-03-20 Quiz Agent 审计修复（regex 对齐 + context override + CSV 共享）
+
+| # | 待测项 | 优先级 | 前置条件 | 通过标准 | 状态 |
+|---|--------|--------|---------|---------|------|
+| 1 | Web 端完整两步流程（mockMode 关闭）：说"开始批改" + 上传答卷 → 后端正确创建 quiz_grade job | P0 | 配置百炼 API key，完成答案提取 | "开始批改" 被后端 inferIntent 识别为 quiz_grade，不依赖 LLM planner | [ ] 待测 |
+| 2 | mockMode 下说"没问题"能走通确认流程 | P0 | mockMode=true，完成 quiz_key job，前端显示"答案已识别" | 回复"答案已确认"，不掉入通用 chat | [ ] 待测 |
+| 3 | mockMode 下输入"47:movable"能修正答案 | P0 | 同上 | 回复"已修正 1 题"，DB 中 correct_answer 已更新 | [ ] 待测 |
+| 4 | quiz session 中说无关话题不被劫持到 quiz handler | P1 | context 中有 answer_key_id，但上条 assistant 消息不含"答案已识别" | 不返回 quiz_grade intent，正常走 chat 或其他 intent | [ ] 待测 |
+| 5 | GradesAgent CSV 输出中含"=CMD()"的学生姓名被转义 | P1 | 创建含恶意姓名的成绩数据 | 下载 CSV 打开后，姓名列显示 '=CMD() 而非执行公式 | [ ] 待测 |
+| 6 | local_file reroute 到 quiz_grade/ppt/grades 仍正常工作 | P1 | 发类似"打开过关单文件"的消息 | handleLocalFileIntent reroute 后二次 dispatch 正确处理 | [ ] 待测 |
