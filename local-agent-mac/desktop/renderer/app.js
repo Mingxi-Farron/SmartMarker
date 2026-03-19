@@ -26,6 +26,8 @@
     isComposing: false,
     pptReasoningShown: new Set(),
     pendingUploads: new Map(),
+    pendingAnswerKeys: new Map(),   // session_id -> { answer_key_id, page_count, question_count }
+    pendingQuizResults: new Map(),  // session_id -> { result_id, job_id }
   };
 
   const ui = {
@@ -139,6 +141,28 @@
       messageObj[sessionId] = items.slice(-150);
     }
     writeCache(SESSION_MESSAGE_CACHE_KEY, messageObj);
+
+    // Quiz caches: keep only entries in active sessions, max 20
+    const validSids = new Set(state.sessions.map((s) => s.session_id));
+    const quizKeysObj = {};
+    let qkCount = 0;
+    for (const [sid, val] of state.pendingAnswerKeys.entries()) {
+      if (qkCount >= 20) break;
+      if (!validSids.has(sid)) continue;
+      quizKeysObj[sid] = val;
+      qkCount += 1;
+    }
+    writeCache('teacher-ai-quiz-keys-v1', quizKeysObj);
+
+    const quizResultsObj = {};
+    let qrCount = 0;
+    for (const [sid, val] of state.pendingQuizResults.entries()) {
+      if (qrCount >= 20) break;
+      if (!validSids.has(sid)) continue;
+      quizResultsObj[sid] = val;
+      qrCount += 1;
+    }
+    writeCache('teacher-ai-quiz-results-v1', quizResultsObj);
   }
 
   function hydrateCaches() {
@@ -156,6 +180,17 @@
         }
         state.sessionMessages.set(sessionId, rows.map(normalizeMessage));
       }
+    }
+
+    const cachedQuizKeys = readCache('teacher-ai-quiz-keys-v1', {});
+    state.pendingAnswerKeys.clear();
+    for (const [sid, val] of Object.entries(cachedQuizKeys || {})) {
+      state.pendingAnswerKeys.set(sid, val);
+    }
+    const cachedQuizResults = readCache('teacher-ai-quiz-results-v1', {});
+    state.pendingQuizResults.clear();
+    for (const [sid, val] of Object.entries(cachedQuizResults || {})) {
+      state.pendingQuizResults.set(sid, val);
     }
   }
 
@@ -624,10 +659,15 @@
       return 'grades';
     }
 
-    if (gradeHint.test(message)) {
-      return 'grades';
+    const quizHint = /(过关单|批改过关|答案录入|答题卡|批改试卷|上传.*答案|答案.*上传|开始批改)/i;
+    if (quizHint.test(message)) {
+      const sid = state.activeSessionId;
+      if (hasImage && !state.pendingAnswerKeys.has(sid)) return 'quiz_answer_key';
+      if (hasImage && state.pendingAnswerKeys.has(sid)) return 'quiz_grade_papers';
+      if (!hasImage && state.pendingAnswerKeys.has(sid)) return 'quiz_grade_papers';
+      return 'quiz_answer_key';
     }
-    if (hasImage && gradeHint.test(message)) {
+    if (gradeHint.test(message)) {
       return 'grades';
     }
     if (/ppt|课件|幻灯|投影片/.test(message)) {
@@ -647,10 +687,18 @@
     setStatusHint('任务进行中', 'busy');
 
     let previous = '';
+    let lastProgress = '';
     for (let i = 0; i < 180; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       try {
         const job = await window.desktopApi.getJob(jobId);
+
+        const currentProgress = job.result?.progress || '';
+        if (currentProgress && currentProgress !== lastProgress) {
+          lastProgress = currentProgress;
+          upsertPending(`任务 ${jobId}：${currentProgress}`, sessionId);
+        }
+
         if (job.status !== previous) {
           previous = job.status;
           appendMessage({
@@ -704,6 +752,54 @@
               content: `成绩分析完成。记录数：${summary.total_records ?? '-'}，平均分：${summary.overall_avg ?? '-'}`,
               links,
             });
+          } else if (job.type === 'quiz_key') {
+            const answerId = result.answer_key_id;
+            const pageCount = result.page_count || 0;
+            const questionCount = result.question_count || 0;
+            const lowConf = result.low_confidence_questions || [];
+            if (answerId) {
+              state.pendingAnswerKeys.set(sessionId, { answer_key_id: answerId, page_count: pageCount, question_count: questionCount });
+              persistCaches();
+            }
+            let text = `✅ 答案已识别，共 ${questionCount} 题（${pageCount} 页）。`;
+            if (lowConf.length > 0) {
+              text += `\n\n⚠️ 以下 ${lowConf.length} 题识别可能有误，请重点检查：`;
+              for (const item of lowConf) {
+                text += `\n  #${item.number}: 当前识别为 "${item.correct_answer}"（置信度低）`;
+              }
+              text += '\n\n确认无误请说"没问题"。如需修正，输入如 "47:movable" 即可。';
+            } else {
+              text += '\n\n确认无误请说"没问题"，然后上传学生答卷照片。';
+            }
+            appendMessage({ sessionId, role: 'assistant', content: text });
+          } else if (job.type === 'quiz_grade') {
+            const summary = result.summary || {};
+            const lowConf = result.low_confidence_items || [];
+            const failed = result.failed_students || [];
+            const links = [];
+            if (result.xlsx_download_url) links.push({ label: '下载 Excel', url: result.xlsx_download_url });
+            if (result.csv_download_url) links.push({ label: '下载 CSV', url: result.csv_download_url });
+            if (result.result_id) {
+              state.pendingQuizResults.set(sessionId, { result_id: result.result_id, job_id: jobId });
+              persistCaches();
+            }
+            let text = `✅ 批改完成！共 ${summary.student_count || '-'} 位学生`;
+            text += `\n\n📊 班级概况：平均 ${summary.average ?? '-'}`;
+            if (summary.max_student) text += ` | 最高 ${summary.max_rate} ${summary.max_student}`;
+            if (summary.min_student) text += ` | 最低 ${summary.min_rate} ${summary.min_student}`;
+            if (summary.high_error_questions?.length > 0) {
+              text += '\n📌 高频错题：';
+              text += summary.high_error_questions.map((q) => `#${q.question_number} ${q.correct_answer}（错误率 ${q.error_rate}）`).join('、');
+            }
+            if (lowConf.length > 0) {
+              text += `\n⚠️ ${lowConf.length} 道题需要你确认（OCR 不确定）`;
+              text += '\n  回复"查看确认题"可逐条复核，或说"全部按系统判定"跳过。';
+            }
+            if (failed.length > 0) {
+              text += `\n\n⚠️ ${failed.length} 位学生识别失败：`;
+              for (const f of failed) text += `\n  - 第 ${f.photo_index + 1} 张照片起：${f.reason}`;
+            }
+            appendMessage({ sessionId, role: 'assistant', content: text, links });
           } else {
             appendMessage({
               sessionId,
@@ -942,6 +1038,55 @@
         return;
       }
 
+      if (intent === 'quiz_answer_key' && files.length > 0) {
+        setStatusHint('上传答案中', 'busy');
+        upsertPending('正在上传标准答案照片...', sessionId);
+        const upload = await window.desktopApi.uploadImages({ filePaths: files });
+        setPendingUploadId(sessionId, upload.upload_id);
+        appendMessage({ sessionId, role: 'system', content: `已上传 ${files.length} 张答案照片` });
+        upsertPending('正在识别标准答案...', sessionId);
+        const reply = await window.desktopApi.sendChat({
+          message: text || '这是标准答案',
+          session_id: sessionId,
+          upload_id: upload.upload_id,
+        });
+        await handleAgentReply(reply, sessionId, { userCreatedAt });
+        return;
+      }
+
+      if (intent === 'quiz_grade_papers') {
+        const pending = state.pendingAnswerKeys.get(sessionId);
+        const quizResult = state.pendingQuizResults.get(sessionId);
+        const chatPayload = {
+          message: text || '开始批改',
+          session_id: sessionId,
+          upload_id: pendingUploadId || undefined,
+          answer_key_id: pending?.answer_key_id,
+          quiz_result_id: quizResult?.result_id,
+        };
+        if (files.length > 0) {
+          setStatusHint('上传学生答卷中', 'busy');
+          upsertPending('正在上传学生答卷...', sessionId);
+          const upload = await window.desktopApi.uploadImages({ filePaths: files });
+          setPendingUploadId(sessionId, upload.upload_id);
+          chatPayload.upload_id = upload.upload_id;
+          const pageCount = pending?.page_count;
+          if (pageCount && pageCount > 0) {
+            const est = Math.floor(files.length / pageCount);
+            const rem = files.length % pageCount;
+            let hint = `已收到 ${files.length} 张照片（约 ${est} 份答卷，每份 ${pageCount} 页）`;
+            if (rem !== 0) hint += `\n⚠️ 当前 ${files.length} 张不是 ${pageCount} 的整数倍，可能有遗漏。`;
+            appendMessage({ sessionId, role: 'system', content: hint });
+          } else {
+            appendMessage({ sessionId, role: 'system', content: `已上传 ${files.length} 张学生答卷照片` });
+          }
+        }
+        upsertPending('正在提交批改任务...', sessionId);
+        const reply = await window.desktopApi.sendChat(chatPayload);
+        await handleAgentReply(reply, sessionId, { userCreatedAt });
+        return;
+      }
+
       if (files.length > 0 && files.every((f) => /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(f))) {
         setStatusHint('上传附件中', 'busy');
         upsertPending('正在上传图片...', sessionId);
@@ -981,10 +1126,14 @@
 
       setStatusHint('思考中', 'busy');
       upsertPending('正在思考并调用主控 Agent...', sessionId);
+      const pending = state.pendingAnswerKeys.get(sessionId);
+      const quizResult = state.pendingQuizResults.get(sessionId);
       const reply = await window.desktopApi.sendChat({
         message: text,
         session_id: sessionId,
         upload_id: pendingUploadId || undefined,
+        answer_key_id: pending?.answer_key_id,
+        quiz_result_id: quizResult?.result_id,
       });
       await handleAgentReply(reply, sessionId, { userCreatedAt });
     } catch (err) {

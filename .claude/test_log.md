@@ -38,3 +38,19 @@
 | 8 | REST DELETE /answer-keys/:id 删除 + CASCADE | P1 | 用户有 answer_key + questions | 删除后 questions 也消失 | [ ] 待测 |
 | 9 | planMainAction 返回 quiz_grade intent 后正确路由 | P1 | 发含 quiz 关键词的模糊消息 | LLM planner 返回 quiz_grade，handleChat 正确 dispatch | [ ] 待测 |
 | 10 | local_file reroute 到 quiz_grade 正常工作 | P2 | 发类似"帮我批改过关单文件"的消息 | 先进入 local_file，reroute 到 quiz_grade | [ ] 待测 |
+
+## 2026-03-20 Quiz Agent Phase 6 (Frontend)
+
+| # | 待测项 | 优先级 | 前置条件 | 通过标准 | 状态 |
+|---|--------|--------|---------|---------|------|
+| 1 | Web SPA 完整流程：上传答案 → 预览 → 确认 → 上传学生卷 → 批改 → 下载 Excel | P0 | 启动 orchestrator + 配置 VLM API key + 准备照片 | 全流程无报错，Excel 可下载 | [ ] 待测 |
+| 2 | Electron 桌面端完整流程同上 | P0 | 运行 Electron app 并连接到 orchestrator | 同 Web SPA 预期 | [ ] 待测 |
+| 3 | 答案预览展示低置信题标记 | P0 | quiz_key 完成，有低置信题 | 预览消息中标出低置信题号和识别结果 | [ ] 待测 |
+| 4 | 批改进度实时更新（"批改中 3/10"） | P1 | 提交 10 份学生答卷 | 聊天气泡文字从"处理中"变为"批改中 1/10"..."批改中 10/10" | [ ] 待测 |
+| 5 | 照片计数提示（UX F2）显示估算学生数 | P1 | answer key page_count=3，上传 9 张照片 | 显示"约 3 份答卷，每份 3 页" | [ ] 待测 |
+| 6 | 照片数非整数倍时显示警告 | P1 | page_count=3，上传 10 张照片 | 显示"不是 3 的整数倍，可能有遗漏" | [ ] 待测 |
+| 7 | 批改完成摘要显示班级概况 + 高频错题 + 下载链接 | P1 | 完成一次批改 | 摘要含平均分、最高/最低、错题列表、Excel/CSV 下载按钮 | [ ] 待测 |
+| 8 | 增量追加：第二次上传自动传 quiz_result_id | P1 | 第一次批改完成 | 第二次批改用追加模式，student_count 累加 | [ ] 待测 |
+| 9 | Electron 端 quiz 状态在 session 切换后保留 | P1 | 切换到其他 session 再切回 | pendingAnswerKeys 仍在，可继续批改流程 | [ ] 待测 |
+| 10 | detectIntent 不误判"成绩统计"为 quiz | P1 | 发"查看成绩"消息 | 路由到 grades 而非 quiz | [ ] 待测 |
+| 11 | 部分失败学生在前端显示 | P2 | 混入模糊照片导致部分学生 OCR 失败 | 摘要中列出失败学生和原因 | [ ] 待测 |
