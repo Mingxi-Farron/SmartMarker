@@ -1081,6 +1081,183 @@ ${essayText}`;
     return review;
   }
 
+  async extractAnswerKeyFromImages({ imagePaths, hintText = '' }) {
+    if (!imagePaths || imagePaths.length === 0) {
+      throw new Error('未提供答案图片');
+    }
+
+    if (this.mockMode) {
+      const mockAnswers = ['deep', 'desert', 'Asia', 'feel free to', 'tourist', 'achieve', 'separate', 'government', 'mobile', 'complete', 'receive', 'process', 'pack', 'almost', 'professional', 'admire', 'walk into', 'take a taxi', 'be known for', 'not only...but also...'];
+      const mockTags = ['词汇-名词', '词汇-名词', '词汇-地名', '短语', '词汇-名词', '词汇-动词', '词汇-形容词', '词汇-名词', '词汇-形容词', '词汇-形容词', '词汇-动词', '词汇-名词', '词汇-动词', '词汇-副词', '词汇-形容词', '词汇-动词', '短语', '短语', '短语', '句型'];
+      return {
+        page_count: imagePaths.length,
+        questions: mockAnswers.map((a, i) => ({
+          number: i + 1,
+          correct_answer: a,
+          knowledge_tag: mockTags[i],
+          confidence: i === 5 ? 0.4 : 0.95,
+        })),
+      };
+    }
+
+    const safeHint = String(hintText || '').replace(/[\n\r`]/g, ' ').slice(0, 200);
+
+    const content = [
+      {
+        type: 'text',
+        text: `请从以下标准答案照片中逐题读出正确答案，输出 JSON。
+JSON 结构：
+{
+  "page_count": 照片页数（整数）,
+  "questions": [
+    {
+      "number": 题号（整数），
+      "correct_answer": "正确答案文本",
+      "knowledge_tag": "知识点标签（如：词汇-名词、短语、句型、语法-时态 等）",
+      "confidence": 0.0-1.0 的识别置信度
+    }
+  ]
+}
+要求：
+1. 按题号从小到大排列。
+2. 每题必须有 confidence 字段，不确定的题给低于 0.6 的值。
+3. knowledge_tag 根据答案内容推断即可。
+4. 若某题答案无法识别，correct_answer 留空，confidence 设为 0。
+${safeHint ? `提示信息：${safeHint}` : ''}`
+      },
+    ];
+
+    for (const imagePath of imagePaths) {
+      const file = await fs.readFile(imagePath);
+      const ext = path.extname(imagePath).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      content.push({
+        type: 'image_url',
+        image_url: { url: `data:${mime};base64,${file.toString('base64')}` },
+      });
+    }
+
+    const output = await this.chatCompletion({
+      messages: [
+        { role: 'system', content: '你是英语过关单/测验答案识别助手。必须严格输出 JSON，不要 markdown 或额外解释。' },
+        { role: 'user', content },
+      ],
+      temperature: 0.1,
+      maxTokens: 6000,
+    });
+
+    const parsed = parseJsonBlock(output);
+    if (!parsed || !Array.isArray(parsed.questions)) {
+      throw new Error('模型未返回合法答案 JSON');
+    }
+    return {
+      page_count: parsed.page_count || imagePaths.length,
+      questions: parsed.questions.map((q) => ({
+        number: Number(q.number) || 0,
+        correct_answer: String(q.correct_answer || ''),
+        knowledge_tag: String(q.knowledge_tag || ''),
+        confidence: q.confidence != null ? Number(q.confidence) : 1.0,
+      })),
+    };
+  }
+
+  async ocrStudentAnswers({ imagePaths }) {
+    if (!imagePaths || imagePaths.length === 0) {
+      throw new Error('未提供学生答卷图片');
+    }
+
+    if (this.mockMode) {
+      return '张三|240301|1:deep|2:desert|3:Asia|4:feel free to|5:tourist|6:achive|7:seperate|8:goverment|9:mobile|10:complete|11:receive|12:process|13:pack|14:almost|15:professional|16:admire|17:walk into|18:take a taxi|19:be known for|20:not only...but also...';
+    }
+
+    const content = [
+      {
+        type: 'text',
+        text: `请逐题读出这位学生手写的英文答案，严格按以下紧凑格式输出（一行，不换行）：
+姓名|学号|1:答案|2:答案|3:答案|...|N:答案
+
+要求：
+1. 姓名和学号从答卷顶部读取，读不到则姓名写"未知"，学号写"000000"。
+2. 每题答案原样抄写，不要修正拼写。
+3. 无法识别的题写"?"。
+4. 不要输出任何解释、JSON 或 markdown，只输出一行紧凑文本。`
+      },
+    ];
+
+    for (const imagePath of imagePaths) {
+      const file = await fs.readFile(imagePath);
+      const ext = path.extname(imagePath).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      content.push({
+        type: 'image_url',
+        image_url: { url: `data:${mime};base64,${file.toString('base64')}` },
+      });
+    }
+
+    const output = await this.chatCompletion({
+      messages: [
+        { role: 'system', content: '你是英语答卷 OCR 助手。严格按指定格式输出，不要输出 JSON 或 markdown。' },
+        { role: 'user', content },
+      ],
+      temperature: 0.1,
+      maxTokens: 2000,
+    });
+
+    return String(output || '').trim();
+  }
+
+  async verifyOcrMismatches({ pairs }) {
+    if (!pairs || pairs.length === 0) {
+      return [];
+    }
+
+    if (this.mockMode) {
+      return pairs.map((p) => ({
+        question_number: p.questionNumber,
+        student_answer: p.studentAnswer,
+        correct_answer: p.correctAnswer,
+        verdict: 'wrong',
+        confidence: 0.9,
+      }));
+    }
+
+    const pairText = pairs
+      .map((p) => `#${p.questionNumber}: OCR="${p.studentAnswer}" 正确="${p.correctAnswer}"`)
+      .join('\n');
+
+    const output = await this.chatCompletion({
+      messages: [
+        { role: 'system', content: '你是英语答案核验助手。必须严格输出 JSON 数组。' },
+        {
+          role: 'user',
+          content: `以下是 OCR 识别的学生答案与正确答案不匹配的项。请判断每项是否因 OCR 误读导致，实际学生写的和正确答案相同。
+输出 JSON 数组：
+[{ "question_number": 题号, "student_answer": "OCR读到的", "correct_answer": "正确答案", "verdict": "correct"或"wrong", "confidence": 0.0-1.0 }]
+
+"correct" = OCR 误读，学生实际写对了
+"wrong" = 学生确实写错了
+
+待核验项：
+${pairText}`,
+        },
+      ],
+      temperature: 0.1,
+      maxTokens: 1000,
+    });
+
+    const parsed = parseJsonBlock(output);
+    if (!Array.isArray(parsed)) {
+      return pairs.map((p) => ({
+        question_number: p.questionNumber,
+        student_answer: p.studentAnswer,
+        correct_answer: p.correctAnswer,
+        verdict: 'wrong',
+        confidence: 0.5,
+      }));
+    }
+    return parsed;
+  }
+
   async planMainAction({ message, history = [], hasOnlineDevice = false }) {
     if (this.mockMode) {
       return null;
@@ -1092,7 +1269,7 @@ ${essayText}`;
       .map((item) => ({ role: item.role, content: String(item.content) }));
 
     const prompt = `请做“意图路由 + 动作规划”，只输出 JSON，不要 markdown。
-可选 intent: "ppt" | "grades" | "essay_review" | "local_file" | "weather" | "chat"
+可选 intent: "ppt" | "grades" | "essay_review" | "quiz_grade" | "local_file" | "weather" | "chat"
 可选 device_action: null | "list_dir" | "read_file" | "write_file" | "apply_patch" | "delete_path"
 
 输出结构：
@@ -1122,6 +1299,7 @@ ${essayText}`;
 3) 若用户要生成课件/PPT -> intent=ppt。
 4) 若用户要检查英语作文图片中的病句、语法、拼写、主题匹配度 -> intent=essay_review，并尽量提取 essay_topic。
 5) 若用户要成绩统计分析 -> intent=grades。
+5.5) 若用户要批改过关单/quiz/标准答案/答题卡/批改试卷 -> intent=quiz_grade。
 6) 若用户要查天气（例如“深圳未来一周天气”），intent=weather，并尽量提取 weather_city。
 7) 若用户还要求“写入/保存到某文件”，weather_write_path 填路径（可相对路径）。
 8) 其余普通问答 -> intent=chat。
@@ -1151,7 +1329,7 @@ ${String(message || '')}`;
     }
 
     const intent = String(parsed.intent || '').trim();
-    const validIntents = new Set(['ppt', 'grades', 'essay_review', 'local_file', 'weather', 'chat']);
+    const validIntents = new Set(['ppt', 'grades', 'essay_review', 'quiz_grade', 'local_file', 'weather', 'chat']);
     if (!validIntents.has(intent)) {
       return null;
     }

@@ -17,6 +17,7 @@ import { PptAgent } from './agents/ppt-agent.js';
 import { GradesAgent } from './agents/grades-agent.js';
 import { MainAgent } from './agents/main-agent.js';
 import { WeatherService } from './agents/weather-service.js';
+import { QuizAgent } from './agents/quiz-agent.js';
 import { JobWorker } from './jobs/worker.js';
 import { DeviceHub } from './ws/device-hub.js';
 
@@ -50,10 +51,11 @@ const pptClient = new PptClient({
 });
 const pptAgent = new PptAgent({ db, modelClient, pptClient, storage });
 const gradesAgent = new GradesAgent({ db, storage, modelClient, publicBaseUrl: config.publicBaseUrl });
+const quizAgent = new QuizAgent({ db, storage, modelClient, publicBaseUrl: config.publicBaseUrl });
 const hub = new DeviceHub({ db, logger: app.log });
 const weatherService = new WeatherService();
 const mainAgent = new MainAgent({ db, modelClient, hub, weatherService });
-const worker = new JobWorker({ db, pptAgent, gradesAgent, logger: app.log });
+const worker = new JobWorker({ db, pptAgent, gradesAgent, quizAgent, logger: app.log });
 
 await app.register(fastifyJwt, { secret: config.jwtSecret });
 await app.register(fastifyMultipart, {
