@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DB } from '../db.js';
 import { MainAgent } from '../agents/main-agent.js';
 import { ModelClient } from '../agents/model-client.js';
+import { sanitizeCell, csvEscape } from '../utils/csv.js';
 
 let db, mainAgent, tmpDir;
 
@@ -52,6 +53,18 @@ describe('inferIntent: quiz_grade', () => {
 
   it('returns quiz_grade for "答案录入"', () => {
     expect(mainAgent.inferIntent('答案录入')).toBe('quiz_grade');
+  });
+
+  it('returns quiz_grade for "开始批改"', () => {
+    expect(mainAgent.inferIntent('开始批改')).toBe('quiz_grade');
+  });
+
+  it('returns quiz_grade for "批改答案"', () => {
+    expect(mainAgent.inferIntent('批改答案')).toBe('quiz_grade');
+  });
+
+  it('returns essay_review for "批改作文" (regression guard)', () => {
+    expect(mainAgent.inferIntent('批改作文')).toBe('essay_review');
   });
 
   it('does NOT return quiz_grade for grades keywords', () => {
@@ -256,6 +269,54 @@ describe('handleChat quiz_grade dispatch', () => {
     sessionId = session.id;
   });
 
+  it('routes "没问题" to quiz_grade when answer_key_id in context and last assistant said "答案已识别"', async () => {
+    const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
+    // Seed history with the "答案已识别" assistant message
+    db.createMessage({ userId, sessionId, role: 'assistant', content: '✅ 答案已识别，共 20 题' });
+
+    const result = await mainAgent.handleChat({
+      userId,
+      sessionId,
+      message: '没问题',
+      context: { answer_key_id: answerKeyId }
+    });
+    expect(result.intent).toBe('quiz_grade');
+    expect(result.action).toBe('answer_key_confirmed');
+  });
+
+  it('routes "47:movable" to quiz_grade when answer_key_id in context and last assistant said "答案已识别"', async () => {
+    const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
+    db.bulkInsertAnswerKeyQuestions({
+      answerKeyId,
+      questions: [{ questionNumber: 47, correctAnswer: 'mobile', knowledgeTag: '', confidence: 0.5 }]
+    });
+    db.createMessage({ userId, sessionId, role: 'assistant', content: '✅ 答案已识别，共 20 题' });
+
+    const result = await mainAgent.handleChat({
+      userId,
+      sessionId,
+      message: '47:movable',
+      context: { answer_key_id: answerKeyId }
+    });
+    expect(result.intent).toBe('quiz_grade');
+    expect(result.action).toBe('answer_key_corrected');
+  });
+
+  it('does NOT route unrelated chat to quiz_grade even if answer_key_id is in context', async () => {
+    const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
+    // Last assistant message is NOT quiz-related
+    db.createMessage({ userId, sessionId, role: 'assistant', content: '你好，有什么可以帮你的？' });
+
+    const result = await mainAgent.handleChat({
+      userId,
+      sessionId,
+      message: '今天天气怎么样',
+      context: { answer_key_id: answerKeyId }
+    });
+    // Should NOT be quiz_grade — "今天天气怎么样" matches weather intent
+    expect(result.intent).not.toBe('quiz_grade');
+  });
+
   it('dispatches quiz_grade intent from chat message', async () => {
     const result = await mainAgent.handleChat({
       userId,
@@ -312,5 +373,50 @@ describe('Phase 4: REST endpoint logic', () => {
     });
     const job = db.getJobForUser({ userId, jobId });
     expect(job.type).toBe('quiz_grade');
+  });
+});
+
+// ─── Shared CSV utils ───
+
+describe('sanitizeCell', () => {
+  it('prefixes formula-injection characters with apostrophe', () => {
+    expect(sanitizeCell('=CMD()')).toBe("'=CMD()");
+    expect(sanitizeCell('+1')).toBe("'+1");
+    expect(sanitizeCell('-1')).toBe("'-1");
+    expect(sanitizeCell('@SUM')).toBe("'@SUM");
+  });
+
+  it('leaves normal values unchanged', () => {
+    expect(sanitizeCell('张三')).toBe('张三');
+    expect(sanitizeCell('100')).toBe('100');
+    expect(sanitizeCell('')).toBe('');
+  });
+
+  it('handles null/undefined', () => {
+    expect(sanitizeCell(null)).toBe('');
+    expect(sanitizeCell(undefined)).toBe('');
+  });
+});
+
+describe('csvEscape', () => {
+  it('sanitizes then quotes values with commas', () => {
+    expect(csvEscape('a,b')).toBe('"a,b"');
+  });
+
+  it('sanitizes formula-injection before quoting', () => {
+    const result = csvEscape('=CMD()');
+    expect(result).toBe("'=CMD()");
+  });
+
+  it('doubles internal quotes per RFC 4180', () => {
+    expect(csvEscape('say "hello"')).toBe('"say ""hello"""');
+  });
+
+  it('quotes values containing newlines', () => {
+    expect(csvEscape('line1\nline2')).toBe('"line1\nline2"');
+  });
+
+  it('leaves plain values unchanged', () => {
+    expect(csvEscape('hello')).toBe('hello');
   });
 });

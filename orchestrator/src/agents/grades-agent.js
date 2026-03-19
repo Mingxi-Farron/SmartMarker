@@ -1,5 +1,6 @@
 import path from 'node:path';
 import XLSX from 'xlsx';
+import { sanitizeCell } from '../utils/csv.js';
 
 function normalizeRow(raw) {
   const row = {};
@@ -59,7 +60,7 @@ function parseCsv(text) {
 
 function toCsv(headers, rows) {
   const esc = (v) => {
-    const s = String(v ?? '');
+    const s = sanitizeCell(v);
     if (s.includes(',') || s.includes('"') || s.includes('\n')) {
       return `"${s.replace(/"/g, '""')}"`;
     }

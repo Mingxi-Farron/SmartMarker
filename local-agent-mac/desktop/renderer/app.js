@@ -762,6 +762,15 @@
               persistCaches();
             }
             let text = `✅ 答案已识别，共 ${questionCount} 题（${pageCount} 页）。`;
+            const byPage = result.questions_by_page || [];
+            if (byPage.length > 0) {
+              text += '\n\n📋 答案预览：';
+              for (const page of byPage) {
+                const preview = page.questions.slice(0, 8).map((q) => `${q.number}. ${q.correct_answer}`).join('  ');
+                const ellipsis = page.questions.length > 8 ? '  ...' : '';
+                text += `\n第 ${page.range_start}-${page.range_end} 题（第 ${page.page} 页）：\n  ${preview}${ellipsis}`;
+              }
+            }
             if (lowConf.length > 0) {
               text += `\n\n⚠️ 以下 ${lowConf.length} 题识别可能有误，请重点检查：`;
               for (const item of lowConf) {
@@ -1044,6 +1053,7 @@
         const upload = await window.desktopApi.uploadImages({ filePaths: files });
         setPendingUploadId(sessionId, upload.upload_id);
         appendMessage({ sessionId, role: 'system', content: `已上传 ${files.length} 张答案照片` });
+        appendMessage({ sessionId, role: 'system', content: '💡 建议确保文字清晰、无遮挡。若识别结果不佳可重新上传。' });
         upsertPending('正在识别标准答案...', sessionId);
         const reply = await window.desktopApi.sendChat({
           message: text || '这是标准答案',
@@ -1080,6 +1090,7 @@
           } else {
             appendMessage({ sessionId, role: 'system', content: `已上传 ${files.length} 张学生答卷照片` });
           }
+          appendMessage({ sessionId, role: 'system', content: '💡 请确保照片按学生顺序排列：学生1第1页→学生1第2页→学生2第1页→学生2第2页...' });
         }
         upsertPending('正在提交批改任务...', sessionId);
         const reply = await window.desktopApi.sendChat(chatPayload);

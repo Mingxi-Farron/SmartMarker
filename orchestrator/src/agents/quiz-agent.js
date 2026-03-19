@@ -1,4 +1,5 @@
 import XLSX from 'xlsx';
+import { sanitizeCell, csvEscape } from '../utils/csv.js';
 
 export function parseCompactOcr(text) {
   const trimmed = String(text || '').trim();
@@ -75,22 +76,6 @@ export function groupPhotosByStudent(files, pageCount) {
   return groups;
 }
 
-function sanitizeCell(value) {
-  const s = String(value ?? '');
-  if (s.length > 0 && '=+-@\t\r'.includes(s[0])) {
-    return `'${s}`;
-  }
-  return s;
-}
-
-function csvEscape(value) {
-  const s = sanitizeCell(value);
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
 export class QuizAgent {
   constructor({ db, storage, modelClient, publicBaseUrl }) {
     this.db = db;
@@ -112,7 +97,7 @@ export class QuizAgent {
 
   async processAnswerKey(job) {
     const { id: jobId, user_id: userId, input } = job;
-    this.db.updateJob({ jobId, status: 'processing' });
+    this.db.updateJob({ jobId, status: 'processing', result: { progress: '正在识别答案...' } });
 
     const upload = this.db.getUploadWithFiles({ userId, uploadId: input.upload_id });
     if (!upload || upload.files.length === 0) {
@@ -124,6 +109,8 @@ export class QuizAgent {
       imagePaths,
       hintText: input.hint_text || '',
     });
+
+    this.db.updateJob({ jobId, status: 'processing', result: { progress: '识别完成，正在保存...' } });
 
     if (!vlmResult.questions || vlmResult.questions.length === 0) {
       throw new Error('未识别到任何题目');
@@ -148,6 +135,22 @@ export class QuizAgent {
 
     const lowConfidence = vlmResult.questions.filter((q) => (q.confidence || 1) < 0.6);
 
+    // Build page-grouped preview (heuristic: distribute evenly across pages)
+    const totalPages = vlmResult.page_count || imagePaths.length;
+    const questionsPerPage = Math.ceil(vlmResult.questions.length / Math.max(1, totalPages));
+    const questionsByPage = [];
+    for (let p = 0; p < totalPages; p++) {
+      const slice = vlmResult.questions.slice(p * questionsPerPage, (p + 1) * questionsPerPage);
+      if (slice.length > 0) {
+        questionsByPage.push({
+          page: p + 1,
+          range_start: slice[0].number,
+          range_end: slice[slice.length - 1].number,
+          questions: slice.map((q) => ({ number: q.number, correct_answer: q.correct_answer })),
+        });
+      }
+    }
+
     this.db.updateJob({
       jobId,
       status: 'done',
@@ -159,6 +162,7 @@ export class QuizAgent {
           number: q.number,
           correct_answer: q.correct_answer,
         })),
+        questions_by_page: questionsByPage,
         low_confidence_questions: lowConfidence.map((q) => ({
           number: q.number,
           correct_answer: q.correct_answer,
@@ -225,12 +229,16 @@ export class QuizAgent {
 
     // 5. Process each student
     const allStudentResults = [];
+    const gradeStartTime = Date.now();
 
     for (let idx = 0; idx < studentGroups.length; idx++) {
       const group = studentGroups[idx];
       const imagePaths = group.map((f) => f.path);
 
-      resultAcc.progress = `批改中 ${idx + 1}/${totalStudents}`;
+      const elapsed = (Date.now() - gradeStartTime) / 1000;
+      const avgPerStudent = idx > 0 ? elapsed / idx : 3;
+      const remaining = Math.max(0, Math.round(avgPerStudent * (totalStudents - idx - 1)));
+      resultAcc.progress = `批改中 ${idx + 1}/${totalStudents}（约剩 ${remaining} 秒）`;
       this.db.updateJob({ jobId, status: 'processing', result: resultAcc });
 
       try {
@@ -246,6 +254,9 @@ export class QuizAgent {
         const { results, mismatches } = compareAnswers(parsed.answers, answerKeyQuestions);
 
         // Stage 3: Optional VLM verification for mismatches (batched, max 30 per call)
+        // TECH_DEBT: verifyOcrMismatches is pure text (no images) but uses the VLM model.
+        // A cheaper text-only model or local Levenshtein comparison would reduce cost/latency.
+        // Same pattern exists in grades-agent (recordsFromImages) and ppt-agent (generateOutline).
         let verifiedResults = results;
         if (mismatches.length > 0) {
           try {
