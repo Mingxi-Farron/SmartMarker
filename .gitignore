@@ -1,0 +1,13 @@
+node_modules
+.data
+data
+.tmp-data
+.env
+*.log
+.DS_Store
+dist
+local-agent-mac/dist
+local-agent-mac/release
+orchestrator/package-lock.json
+local-agent-mac/package-lock.json
+教材

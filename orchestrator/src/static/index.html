@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Teacher AI 助手</title>
+    <style>
+      :root {
+        --bg-1: #f6f7fb;
+        --bg-2: #eef2ff;
+        --panel: #ffffff;
+        --line: #d8def3;
+        --text: #101425;
+        --muted: #5f6783;
+        --brand: #2f6bff;
+        --brand-2: #274de4;
+        --ok: #179b63;
+        --assistant: #f0f4ff;
+        --system: #edf7ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1000px 500px at -15% -20%, #dbe6ff 20%, transparent 70%),
+          radial-gradient(700px 400px at 120% -10%, #d7f5ff 15%, transparent 65%),
+          linear-gradient(180deg, var(--bg-2), var(--bg-1));
+      }
+
+      .layout {
+        max-width: 980px;
+        margin: 0 auto;
+        min-height: 100vh;
+        padding: 18px 12px;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 12px;
+      }
+
+      .topbar {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .title {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: 0.2px;
+      }
+
+      .status {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .chat {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+        display: grid;
+        grid-template-rows: 1fr;
+        min-height: 62vh;
+      }
+
+      .messages {
+        padding: 14px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .row {
+        display: flex;
+      }
+
+      .row.user {
+        justify-content: flex-end;
+      }
+
+      .bubble {
+        max-width: min(82%, 700px);
+        border-radius: 16px;
+        padding: 10px 12px;
+        font-size: 15px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border: 1px solid transparent;
+      }
+
+      .row.user .bubble {
+        color: #fff;
+        background: linear-gradient(120deg, var(--brand), var(--brand-2));
+      }
+
+      .row.assistant .bubble {
+        background: var(--assistant);
+        border-color: #d5ddff;
+      }
+
+      .row.system .bubble {
+        background: var(--system);
+        border-color: #cfe8ff;
+        color: #0f3e62;
+      }
+
+      .meta {
+        margin-top: 7px;
+        font-size: 12px;
+        opacity: 0.72;
+      }
+
+      .links {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .link-btn {
+        display: inline-block;
+        text-decoration: none;
+        border-radius: 10px;
+        padding: 5px 9px;
+        font-size: 13px;
+        color: #0d2a7d;
+        background: #deebff;
+        border: 1px solid #bdd1ff;
+      }
+
+      .composer {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 10px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .picker {
+        display: none;
+      }
+
+      .selected-files {
+        min-height: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .chip {
+        font-size: 12px;
+        background: #ecf3ff;
+        color: #27428a;
+        border: 1px solid #c9dafd;
+        border-radius: 999px;
+        padding: 3px 9px;
+      }
+
+      .editor {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .icon-btn,
+      .send-btn {
+        border: none;
+        cursor: pointer;
+        border-radius: 12px;
+        font: inherit;
+      }
+
+      .icon-btn {
+        width: 42px;
+        height: 42px;
+        background: #ebf0ff;
+        color: #1f3d90;
+        font-size: 18px;
+      }
+
+      .send-btn {
+        padding: 0 14px;
+        height: 42px;
+        color: #fff;
+        background: linear-gradient(120deg, var(--brand), var(--brand-2));
+      }
+
+      textarea {
+        width: 100%;
+        resize: none;
+        min-height: 42px;
+        max-height: 140px;
+        border-radius: 12px;
+        border: 1px solid #cbd5f8;
+        font: inherit;
+        padding: 10px 12px;
+        outline: none;
+      }
+
+      textarea:focus {
+        border-color: #8fa9ff;
+        box-shadow: 0 0 0 2px rgba(47, 107, 255, 0.13);
+      }
+
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 2px;
+      }
+
+      @media (max-width: 700px) {
+        .layout {
+          padding: 10px;
+        }
+
+        .title {
+          font-size: 20px;
+        }
+
+        .bubble {
+          max-width: 92%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <header class="topbar">
+        <h1 class="title">Teacher AI 助手</h1>
+        <div class="status" id="statusText">未登录，请先在聊天框输入邀请码</div>
+      </header>
+
+      <main class="chat">
+        <div class="messages" id="messages"></div>
+      </main>
+
+      <section class="composer">
+        <input class="picker" id="filePicker" type="file" multiple accept="image/*,.csv,.xlsx,.xls" />
+        <div class="selected-files" id="selectedFiles"></div>
+        <div class="editor">
+          <button class="icon-btn" id="attachBtn" title="添加附件">+</button>
+          <textarea id="messageInput" placeholder="先输入邀请码登录。登录后可直接说：‘根据这些教材图生成PPT’ 或 ‘分析这个成绩表’"></textarea>
+          <button class="send-btn" id="sendBtn">发送</button>
+        </div>
+        <div class="hint">单一对话流：发送文字 + 附件即可，系统会自动走 PPT / 成绩分析 / 作文批改流程。</div>
+      </section>
+    </div>
+
+    <script>
+      const state = {
+        jwt: '',
+        userId: '',
+        selectedFiles: [],
+        sending: false,
+        polling: new Set(),
+        pendingUploadId: ''
+      };
+
+      const ui = {
+        messages: document.getElementById('messages'),
+        statusText: document.getElementById('statusText'),
+        filePicker: document.getElementById('filePicker'),
+        selectedFiles: document.getElementById('selectedFiles'),
+        messageInput: document.getElementById('messageInput'),
+        sendBtn: document.getElementById('sendBtn'),
+        attachBtn: document.getElementById('attachBtn')
+      };
+
+      function nowTime() {
+        return new Date().toLocaleTimeString();
+      }
+
+      function escapeText(value) {
+        return String(value ?? '');
+      }
+
+      function scrollToBottom() {
+        ui.messages.scrollTop = ui.messages.scrollHeight;
+      }
+
+      function setStatus(text) {
+        ui.statusText.textContent = text;
+      }
+
+      function addBubble(role, text, links = []) {
+        const row = document.createElement('div');
+        row.className = `row ${role}`;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = escapeText(text);
+
+        if (links.length > 0) {
+          const linksBox = document.createElement('div');
+          linksBox.className = 'links';
+          for (const link of links) {
+            const a = document.createElement('a');
+            a.className = 'link-btn';
+            a.href = link.url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = link.label;
+            linksBox.appendChild(a);
+          }
+          bubble.appendChild(linksBox);
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = nowTime();
+        bubble.appendChild(meta);
+
+        row.appendChild(bubble);
+        ui.messages.appendChild(row);
+        scrollToBottom();
+      }
+
+      function showSelectedFiles() {
+        ui.selectedFiles.innerHTML = '';
+        for (const file of state.selectedFiles) {
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.textContent = file.name;
+          ui.selectedFiles.appendChild(chip);
+        }
+      }
+
+      function clearComposer() {
+        ui.messageInput.value = '';
+        state.selectedFiles = [];
+        ui.filePicker.value = '';
+        showSelectedFiles();
+      }
+
+      function authHeaders() {
+        return state.jwt ? { Authorization: `Bearer ${state.jwt}` } : {};
+      }
+
+      async function jsonRequest(url, options = {}) {
+        const response = await fetch(url, options);
+        let data = null;
+        try {
+          data = await response.json();
+        } catch {
+          data = null;
+        }
+        if (!response.ok) {
+          const message = data?.error || `请求失败: ${response.status}`;
+          throw new Error(message);
+        }
+        return data;
+      }
+
+      async function redeemInvite(code) {
+        return jsonRequest('/auth/invite/redeem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+      }
+
+      async function callMainAgent(message, context = {}) {
+        return jsonRequest('/chat', {
+          method: 'POST',
+          headers: {
+            ...authHeaders(),
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message,
+            upload_id: context.upload_id,
+            file_id: context.file_id
+          })
+        });
+      }
+
+      async function uploadImages(files) {
+        const formData = new FormData();
+        for (const f of files) {
+          formData.append('images', f);
+        }
+        return jsonRequest('/upload/images', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: formData
+        });
+      }
+
+      async function createGradesJob(files) {
+        const formData = new FormData();
+        let addedFile = false;
+        for (const f of files) {
+          if (f.type.startsWith('image/')) {
+            formData.append('images', f);
+            continue;
+          }
+          if (/\.(csv|xlsx|xls)$/i.test(f.name) && !addedFile) {
+            formData.append('file', f);
+            addedFile = true;
+          }
+        }
+
+        if (!addedFile && !files.some((f) => f.type.startsWith('image/'))) {
+          throw new Error('成绩分析仅支持 csv/xlsx/xls 或图片文件');
+        }
+
+        return jsonRequest('/jobs/grades', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: formData
+        });
+      }
+
+      function detectIntent(text, files) {
+        const t = text.toLowerCase();
+        const hasImage = files.some((f) => f.type.startsWith('image/'));
+        const hasSheet = files.some((f) => /\.(csv|xlsx|xls)$/i.test(f.name));
+        const gradeHint = /(成绩|分数|成绩单|平均分|排名|班级统计|及格率|月考|期中|期末|csv|xlsx|xls)/i;
+
+        if (hasSheet) {
+          return 'grades';
+        }
+        if (gradeHint.test(text)) {
+          return 'grades';
+        }
+        if (hasImage && gradeHint.test(text)) {
+          return 'grades';
+        }
+        if (/ppt|课件|幻灯|投影片/.test(text)) {
+          return 'ppt';
+        }
+        if (
+          /本地文件|本地目录|授权目录|read_file|write_file|apply_patch|list_dir|delete_path|创建.*文件|新建.*文件|生成.*文件|修改.*文件|删除.*文件/.test(
+            t,
+          )
+        ) {
+          return 'local_file';
+        }
+        return 'chat';
+      }
+
+      function attachTokenIfNeeded(url) {
+        if (!url) {
+          return '';
+        }
+        try {
+          const u = new URL(url, window.location.origin);
+          if (u.pathname.startsWith('/download/')) {
+            u.searchParams.set('token', state.jwt);
+          }
+          return u.toString();
+        } catch {
+          return url;
+        }
+      }
+
+      function renderJobDone(job) {
+        const result = job.result || {};
+        if (job.type === 'ppt') {
+          const links = [];
+          if (result.ppt_url) {
+            links.push({ label: '下载 PPT', url: attachTokenIfNeeded(result.ppt_url) });
+          }
+          const pages = result.outline?.pages?.length || 0;
+          addBubble('assistant', `PPT 任务完成。共生成 ${pages} 页大纲。`, links);
+          return;
+        }
+
+        if (job.type === 'grades') {
+          const links = [];
+          if (result.csv_download_url) {
+            links.push({ label: '下载 CSV', url: attachTokenIfNeeded(result.csv_download_url) });
+          }
+          if (result.xlsx_download_url) {
+            links.push({ label: '下载 XLSX', url: attachTokenIfNeeded(result.xlsx_download_url) });
+          }
+          const summary = result.summary || {};
+          addBubble(
+            'assistant',
+            `成绩分析完成。记录数：${summary.total_records ?? '-'}，平均分：${summary.overall_avg ?? '-'}`,
+            links,
+          );
+          return;
+        }
+
+        addBubble('assistant', `任务完成：${job.job_id}`);
+      }
+
+      async function pollJob(jobId) {
+        if (state.polling.has(jobId)) {
+          return;
+        }
+        state.polling.add(jobId);
+
+        let lastStatus = '';
+        for (let i = 0; i < 180; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          try {
+            const job = await jsonRequest(`/jobs/${jobId}`, {
+              method: 'GET',
+              headers: authHeaders()
+            });
+
+            if (job.status !== lastStatus) {
+              lastStatus = job.status;
+              addBubble('system', `任务 ${jobId} 状态：${job.status}`);
+            }
+
+            if (job.status === 'done') {
+              renderJobDone(job);
+              break;
+            }
+            if (job.status === 'failed') {
+              addBubble('assistant', `任务失败：${job.error || '未知错误'}`);
+              break;
+            }
+          } catch (err) {
+            addBubble('assistant', `查询任务状态失败：${err.message}`);
+            break;
+          }
+        }
+
+        state.polling.delete(jobId);
+      }
+
+      async function handleAgentReply(reply) {
+        if (reply?.reply) {
+          addBubble('assistant', reply.reply);
+        }
+        if (reply?.action === 'job_created' && reply?.job_id) {
+          pollJob(reply.job_id);
+        }
+      }
+
+      async function sendMessage() {
+        if (state.sending) {
+          return;
+        }
+
+        const text = ui.messageInput.value.trim();
+        const files = [...state.selectedFiles];
+
+        if (!text && files.length === 0) {
+          return;
+        }
+
+        state.sending = true;
+        ui.sendBtn.disabled = true;
+
+        try {
+          if (!state.jwt) {
+            addBubble('user', text || '[空邀请码]');
+            const login = await redeemInvite(text);
+            state.jwt = login.jwt;
+            state.userId = login.user_id;
+            setStatus(`已登录 user_id: ${state.userId.slice(0, 8)}...`);
+            addBubble('system', '登录成功。现在你可以直接发消息或上传附件。');
+            clearComposer();
+            return;
+          }
+
+          const userText = text || '[发送了附件]';
+          if (files.length > 0) {
+            addBubble('user', `${userText}\n附件：${files.map((f) => f.name).join('、')}`);
+          } else {
+            addBubble('user', userText);
+          }
+
+          const intent = detectIntent(text, files);
+
+          if (intent === 'ppt' && files.length > 0) {
+            const images = files.filter((f) => f.type.startsWith('image/'));
+            if (images.length === 0) {
+              throw new Error('生成 PPT 需要上传教材图片');
+            }
+            const upload = await uploadImages(images);
+            state.pendingUploadId = upload.upload_id;
+            addBubble('system', `已上传 ${images.length} 张图片，upload_id=${upload.upload_id}`);
+            const reply = await callMainAgent(text || '请根据教材图片生成PPT', {
+              upload_id: upload.upload_id
+            });
+            await handleAgentReply(reply);
+            clearComposer();
+            return;
+          }
+
+          if (intent === 'grades' && files.length > 0) {
+            const created = await createGradesJob(files);
+            addBubble('assistant', `已创建成绩分析任务，job_id=${created.job_id}`);
+            pollJob(created.job_id);
+            clearComposer();
+            return;
+          }
+
+          if (files.length > 0 && files.every((f) => f.type.startsWith('image/'))) {
+            const upload = await uploadImages(files);
+            state.pendingUploadId = upload.upload_id;
+            addBubble('system', `已上传图片，upload_id=${upload.upload_id}`);
+            if (!text) {
+              addBubble('assistant', '图片已收到，暂未自动开始任何任务。你可以继续说“检查这篇英语作文的病句和拼写，并判断和当前主题是否匹配”，或“根据这张教材图生成 PPT”。');
+            } else {
+              const reply = await callMainAgent(text, {
+                upload_id: upload.upload_id
+              });
+              await handleAgentReply(reply);
+            }
+            clearComposer();
+            return;
+          }
+
+          if (files.length > 0) {
+            throw new Error('当前附件类型请配合说明：生成PPT请上传图片；成绩分析请上传csv/xlsx或成绩图片');
+          }
+
+          const reply = await callMainAgent(text, { upload_id: state.pendingUploadId || undefined });
+          await handleAgentReply(reply);
+          clearComposer();
+        } catch (err) {
+          addBubble('assistant', `操作失败：${err.message}`);
+        } finally {
+          state.sending = false;
+          ui.sendBtn.disabled = false;
+        }
+      }
+
+      ui.attachBtn.addEventListener('click', () => {
+        ui.filePicker.click();
+      });
+
+      ui.filePicker.addEventListener('change', (e) => {
+        state.selectedFiles = [...(e.target.files || [])];
+        showSelectedFiles();
+      });
+
+      ui.sendBtn.addEventListener('click', () => {
+        sendMessage();
+      });
+
+      ui.messageInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          sendMessage();
+        }
+      });
+
+      addBubble('system', '欢迎使用 Teacher AI 助手。请先在输入框发送邀请码完成登录。登录后可上传教材图、成绩表，或上传英语作文图片做病句/拼写检查。');
+    </script>
+  </body>
+</html>

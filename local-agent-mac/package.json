@@ -1,0 +1,47 @@
+{
+  "name": "smartmarker-local-agent-mac",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.mjs",
+  "bin": {
+    "teacher-ai-local-agent": "index.js"
+  },
+  "scripts": {
+    "start": "electron desktop/main.mjs",
+    "start:cli": "node index.js",
+    "build:bin": "npx pkg index.js --targets node20-macos-x64,node20-macos-arm64 --out-path dist",
+    "build:desktop": "electron-builder --mac dmg --universal"
+  },
+  "dependencies": {
+    "diff": "^5.2.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "pkg": "^5.8.1"
+  },
+  "build": {
+    "appId": "com.smartmarker.desktop",
+    "productName": "SmartMarker",
+    "files": [
+      "desktop/**/*",
+      "index.js",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    }
+  }
+}
