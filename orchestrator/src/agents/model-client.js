@@ -545,12 +545,15 @@ export class ModelClient {
     }
   }
 
-  async chatCompletion({ messages, temperature = 0.2 }) {
+  async chatCompletion({ messages, temperature = 0.2, maxTokens }) {
+    const resolvedMaxTokens = maxTokens != null
+      ? clampNumber(maxTokens, this.maxTokens, { min: 128, max: 8192 })
+      : this.maxTokens;
     const basePayload = {
       model: this.model,
       messages,
       temperature,
-      max_tokens: this.maxTokens
+      max_tokens: resolvedMaxTokens
     };
 
     const attempts = [];

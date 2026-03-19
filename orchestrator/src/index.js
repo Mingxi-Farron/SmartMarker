@@ -573,7 +573,7 @@ app.post('/chat/sessions/clear', { preHandler: [app.auth] }, async (req, reply) 
 });
 
 app.post('/chat', { preHandler: [app.auth] }, async (req, reply) => {
-  const { message, upload_id, file_id, session_id, device_id } = req.body || {};
+  const { message, upload_id, file_id, session_id, device_id, answer_key_id, quiz_result_id } = req.body || {};
   if (!message) {
     return reply.code(400).send({ error: '缺少 message' });
   }
@@ -592,6 +592,19 @@ app.post('/chat', { preHandler: [app.auth] }, async (req, reply) => {
     });
   }
 
+  if (answer_key_id) {
+    const key = db.getAnswerKeyForUser({ userId, answerKeyId: String(answer_key_id) });
+    if (!key) {
+      return reply.code(404).send({ error: 'answer_key_id 不存在' });
+    }
+  }
+  if (quiz_result_id) {
+    const qr = db.getQuizResultForUser({ userId, resultId: String(quiz_result_id) });
+    if (!qr) {
+      return reply.code(404).send({ error: 'quiz_result_id 不存在' });
+    }
+  }
+
   const result = await mainAgent.handleChat({
     userId,
     sessionId: session.id,
@@ -599,7 +612,9 @@ app.post('/chat', { preHandler: [app.auth] }, async (req, reply) => {
     context: {
       upload_id,
       file_id,
-      device_id
+      device_id,
+      answer_key_id,
+      quiz_result_id
     }
   });
 

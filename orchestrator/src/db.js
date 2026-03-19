@@ -142,11 +142,62 @@ export class DB {
         FOREIGN KEY (device_id) REFERENCES devices(id)
       );
 
+      CREATE TABLE IF NOT EXISTS answer_keys (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        page_count INTEGER NOT NULL DEFAULT 0,
+        source_job_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS answer_key_questions (
+        id TEXT PRIMARY KEY,
+        answer_key_id TEXT NOT NULL,
+        question_number INTEGER NOT NULL,
+        correct_answer TEXT NOT NULL DEFAULT '',
+        knowledge_tag TEXT NOT NULL DEFAULT '',
+        confidence REAL NOT NULL DEFAULT 1.0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (answer_key_id) REFERENCES answer_keys(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS quiz_results (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        answer_key_id TEXT NOT NULL,
+        source_job_id TEXT,
+        student_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (answer_key_id) REFERENCES answer_keys(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS quiz_result_answers (
+        id TEXT PRIMARY KEY,
+        result_id TEXT NOT NULL,
+        student_name TEXT NOT NULL DEFAULT '',
+        student_id_number TEXT NOT NULL DEFAULT '',
+        question_number INTEGER NOT NULL,
+        student_answer TEXT NOT NULL DEFAULT '',
+        is_correct INTEGER NOT NULL DEFAULT 0,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (result_id) REFERENCES quiz_results(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, updated_at);
       CREATE INDEX IF NOT EXISTS idx_files_user ON files(user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_sessions_user_last_message ON chat_sessions(user_id, last_message_at);
+      CREATE INDEX IF NOT EXISTS idx_answer_keys_user ON answer_keys(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_answer_key_questions_key ON answer_key_questions(answer_key_id, question_number);
+      CREATE INDEX IF NOT EXISTS idx_quiz_results_user ON quiz_results(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_quiz_result_answers_result ON quiz_result_answers(result_id, student_name, question_number);
     `);
 
     this.runMigrations();
@@ -684,5 +735,288 @@ export class DB {
       payload: fromJson(row.payload_json, {}),
       result: fromJson(row.result_json, null)
     };
+  }
+
+  // ─── answer_keys CRUD ───
+
+  createAnswerKey({ userId, title = '', pageCount = 0, sourceJobId = null }) {
+    const id = randomUUID();
+    const ts = nowIso();
+    this.db
+      .prepare(
+        'INSERT INTO answer_keys(id, user_id, title, page_count, source_job_id, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(id, userId, title, pageCount, sourceJobId, ts, ts);
+    return id;
+  }
+
+  getAnswerKeyForUser({ userId, answerKeyId }) {
+    return (
+      this.db
+        .prepare(
+          'SELECT id, user_id, title, page_count, source_job_id, created_at, updated_at FROM answer_keys WHERE id = ? AND user_id = ?',
+        )
+        .get(answerKeyId, userId) || null
+    );
+  }
+
+  listAnswerKeysForUser({ userId, limit = 50 }) {
+    return this.db
+      .prepare(
+        'SELECT id, user_id, title, page_count, source_job_id, created_at, updated_at FROM answer_keys WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+      )
+      .all(userId, limit);
+  }
+
+  updateAnswerKey({ userId, answerKeyId, title, pageCount }) {
+    const existing = this.db
+      .prepare('SELECT title, page_count FROM answer_keys WHERE id = ? AND user_id = ?')
+      .get(answerKeyId, userId);
+    if (!existing) {
+      return null;
+    }
+    const nextTitle = title !== undefined ? title : existing.title;
+    const nextPageCount = pageCount !== undefined ? pageCount : existing.page_count;
+    this.db
+      .prepare('UPDATE answer_keys SET title = ?, page_count = ?, updated_at = ? WHERE id = ?')
+      .run(nextTitle, nextPageCount, nowIso(), answerKeyId);
+  }
+
+  deleteAnswerKeyForUser({ userId, answerKeyId }) {
+    const existing = this.db
+      .prepare('SELECT id FROM answer_keys WHERE id = ? AND user_id = ?')
+      .get(answerKeyId, userId);
+    if (!existing) {
+      return null;
+    }
+    this.db.prepare('DELETE FROM answer_keys WHERE id = ?').run(answerKeyId);
+    return { deleted: true };
+  }
+
+  // ─── answer_key_questions CRUD ───
+
+  bulkInsertAnswerKeyQuestions({ answerKeyId, questions }) {
+    if (!questions?.length) return;
+    const insertStmt = this.db.prepare(
+      'INSERT INTO answer_key_questions(id, answer_key_id, question_number, correct_answer, knowledge_tag, confidence, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)',
+    );
+    const updateParent = this.db.prepare('UPDATE answer_keys SET updated_at = ? WHERE id = ?');
+    const txn = this.db.transaction(() => {
+      const ts = nowIso();
+      for (const q of questions) {
+        insertStmt.run(
+          randomUUID(),
+          answerKeyId,
+          q.questionNumber,
+          q.correctAnswer || '',
+          q.knowledgeTag || '',
+          q.confidence != null ? q.confidence : 1.0,
+          ts,
+        );
+      }
+      updateParent.run(ts, answerKeyId);
+    });
+    txn();
+  }
+
+  listQuestionsForAnswerKey({ answerKeyId }) {
+    return this.db
+      .prepare(
+        'SELECT id, answer_key_id, question_number, correct_answer, knowledge_tag, confidence, created_at FROM answer_key_questions WHERE answer_key_id = ? ORDER BY question_number ASC',
+      )
+      .all(answerKeyId);
+  }
+
+  updateAnswerKeyQuestion({ userId, questionId, correctAnswer, knowledgeTag, confidence }) {
+    const existing = this.db
+      .prepare(
+        `SELECT q.correct_answer, q.knowledge_tag, q.confidence
+         FROM answer_key_questions q
+         JOIN answer_keys ak ON ak.id = q.answer_key_id
+         WHERE q.id = ? AND ak.user_id = ?`,
+      )
+      .get(questionId, userId);
+    if (!existing) {
+      return null;
+    }
+    const nextAnswer = correctAnswer !== undefined ? correctAnswer : existing.correct_answer;
+    const nextTag = knowledgeTag !== undefined ? knowledgeTag : existing.knowledge_tag;
+    const nextConf = confidence !== undefined ? confidence : existing.confidence;
+    this.db
+      .prepare('UPDATE answer_key_questions SET correct_answer = ?, knowledge_tag = ?, confidence = ? WHERE id = ?')
+      .run(nextAnswer, nextTag, nextConf, questionId);
+  }
+
+  getAnswerKeyWithQuestions({ userId, answerKeyId }) {
+    const answerKey = this.getAnswerKeyForUser({ userId, answerKeyId });
+    if (!answerKey) {
+      return null;
+    }
+    const questions = this.listQuestionsForAnswerKey({ answerKeyId });
+    return { answerKey, questions };
+  }
+
+  // ─── quiz_results CRUD ───
+
+  createQuizResult({ userId, answerKeyId, sourceJobId = null }) {
+    const id = randomUUID();
+    const ts = nowIso();
+    this.db
+      .prepare(
+        'INSERT INTO quiz_results(id, user_id, answer_key_id, source_job_id, student_count, created_at, updated_at) VALUES(?, ?, ?, ?, 0, ?, ?)',
+      )
+      .run(id, userId, answerKeyId, sourceJobId, ts, ts);
+    return id;
+  }
+
+  getQuizResultForUser({ userId, resultId }) {
+    return (
+      this.db
+        .prepare(
+          'SELECT id, user_id, answer_key_id, source_job_id, student_count, created_at, updated_at FROM quiz_results WHERE id = ? AND user_id = ?',
+        )
+        .get(resultId, userId) || null
+    );
+  }
+
+  updateQuizResult({ userId, resultId, studentCount }) {
+    const existing = this.db
+      .prepare('SELECT id FROM quiz_results WHERE id = ? AND user_id = ?')
+      .get(resultId, userId);
+    if (!existing) {
+      return null;
+    }
+    this.db
+      .prepare('UPDATE quiz_results SET student_count = ?, updated_at = ? WHERE id = ?')
+      .run(studentCount, nowIso(), resultId);
+  }
+
+  listQuizResultsForUser({ userId, limit = 50 }) {
+    return this.db
+      .prepare(
+        'SELECT id, user_id, answer_key_id, source_job_id, student_count, created_at, updated_at FROM quiz_results WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+      )
+      .all(userId, limit);
+  }
+
+  deleteQuizResultForUser({ userId, resultId }) {
+    const existing = this.db
+      .prepare('SELECT id FROM quiz_results WHERE id = ? AND user_id = ?')
+      .get(resultId, userId);
+    if (!existing) {
+      return null;
+    }
+    this.db.prepare('DELETE FROM quiz_results WHERE id = ?').run(resultId);
+    return { deleted: true };
+  }
+
+  // ─── quiz_result_answers CRUD ───
+
+  bulkInsertQuizResultAnswers({ resultId, answers }) {
+    if (!answers?.length) return;
+    const insertStmt = this.db.prepare(
+      'INSERT INTO quiz_result_answers(id, result_id, student_name, student_id_number, question_number, student_answer, is_correct, confidence, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    const txn = this.db.transaction(() => {
+      const ts = nowIso();
+      for (const a of answers) {
+        insertStmt.run(
+          randomUUID(),
+          resultId,
+          a.studentName || '',
+          a.studentIdNumber || '',
+          a.questionNumber,
+          a.studentAnswer || '',
+          a.isCorrect ? 1 : 0,
+          a.confidence != null ? a.confidence : 1.0,
+          ts,
+        );
+      }
+      // Update parent student_count (use student_id_number when available, fall back to student_name)
+      const countRow = this.db
+        .prepare("SELECT COUNT(DISTINCT CASE WHEN student_id_number != '' THEN student_id_number ELSE student_name END) AS cnt FROM quiz_result_answers WHERE result_id = ?")
+        .get(resultId);
+      this.db
+        .prepare('UPDATE quiz_results SET student_count = ?, updated_at = ? WHERE id = ?')
+        .run(countRow.cnt, ts, resultId);
+    });
+    txn();
+  }
+
+  listAnswersForQuizResult({ resultId }) {
+    return this.db
+      .prepare(
+        'SELECT id, result_id, student_name, student_id_number, question_number, student_answer, is_correct, confidence, created_at FROM quiz_result_answers WHERE result_id = ? ORDER BY student_name ASC, question_number ASC',
+      )
+      .all(resultId);
+  }
+
+  listAnswersForStudent({ resultId, studentName }) {
+    return this.db
+      .prepare(
+        'SELECT id, result_id, student_name, student_id_number, question_number, student_answer, is_correct, confidence, created_at FROM quiz_result_answers WHERE result_id = ? AND student_name = ? ORDER BY question_number ASC',
+      )
+      .all(resultId, studentName);
+  }
+
+  updateQuizResultAnswer({ userId, answerId, isCorrect, confidence }) {
+    const existing = this.db
+      .prepare(
+        `SELECT a.is_correct, a.confidence
+         FROM quiz_result_answers a
+         JOIN quiz_results qr ON qr.id = a.result_id
+         WHERE a.id = ? AND qr.user_id = ?`,
+      )
+      .get(answerId, userId);
+    if (!existing) {
+      return null;
+    }
+    const nextCorrect = isCorrect !== undefined ? (isCorrect ? 1 : 0) : existing.is_correct;
+    const nextConf = confidence !== undefined ? confidence : existing.confidence;
+    this.db
+      .prepare('UPDATE quiz_result_answers SET is_correct = ?, confidence = ? WHERE id = ?')
+      .run(nextCorrect, nextConf, answerId);
+  }
+
+  getQuizResultSummary({ resultId }) {
+    const row = this.db
+      .prepare(
+        `SELECT
+          COUNT(DISTINCT CASE WHEN student_id_number != '' THEN student_id_number ELSE student_name END) AS student_count,
+          COUNT(DISTINCT question_number) AS question_count,
+          ROUND(AVG(is_correct) * 100, 1) AS average_correct_rate
+        FROM quiz_result_answers
+        WHERE result_id = ?`,
+      )
+      .get(resultId);
+    return {
+      student_count: row?.student_count ?? 0,
+      question_count: row?.question_count ?? 0,
+      average_correct_rate: row?.average_correct_rate ?? null
+    };
+  }
+
+  getHighErrorQuestions({ resultId, minErrorRate = 0.5 }) {
+    return this.db
+      .prepare(
+        `SELECT
+          question_number,
+          ROUND((1.0 - AVG(is_correct)) * 100, 1) AS error_rate,
+          COUNT(*) AS total_answers
+        FROM quiz_result_answers
+        WHERE result_id = ?
+        GROUP BY question_number
+        HAVING (1.0 - AVG(is_correct)) >= ?
+        ORDER BY error_rate DESC`,
+      )
+      .all(resultId, minErrorRate);
+  }
+
+  getLowConfidenceAnswers({ resultId, maxConfidence = 0.5 }) {
+    return this.db
+      .prepare(
+        'SELECT id, result_id, student_name, student_id_number, question_number, student_answer, is_correct, confidence, created_at FROM quiz_result_answers WHERE result_id = ? AND confidence <= ? ORDER BY confidence ASC',
+      )
+      .all(resultId, maxConfidence);
   }
 }

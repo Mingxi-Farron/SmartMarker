@@ -780,7 +780,9 @@ ipcMain.handle('chat:send', async (_, payload) => {
       session_id: payload?.session_id || null,
       upload_id: payload?.upload_id || null,
       file_id: payload?.file_id || null,
-      device_id: runtime.device?.deviceId || null
+      device_id: runtime.device?.deviceId || null,
+      answer_key_id: payload?.answer_key_id || null,
+      quiz_result_id: payload?.quiz_result_id || null
     }
   });
 });
