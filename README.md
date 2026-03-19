@@ -1,10 +1,12 @@
 # Teacher AI 助手 MVP（阿里云 Ubuntu 24.04 + Mac Local Agent）
 
-面向中国老师的最小可运行版本，支持：
+面向中国老师的 AI 教学助手，支持：
 - 邀请码登录（`max_uses=1`）
 - 教材图片上传 -> 异步 PPT Job -> 返回 `ppt_url`
 - 成绩文件/图片 -> 异步 Grades Job -> 下载 `csv/xlsx`
-- 云端 Main Agent + PPT Agent
+- **过关单/测验批改** -> 答案 OCR + 学生答卷批改 -> 4-sheet Excel 报告（[使用教程](local-agent-mac/TUTORIAL.md)）
+- 英语作文批改（语法、拼写、主题匹配）
+- 云端 Main Agent + PPT/Grades/Quiz/Essay Agents
 - Mac Local Agent（首次邀请码注册，后续自动连接）
 
 ## 1. 项目结构
@@ -35,7 +37,7 @@ cp .env.example .env
 - `ADMIN_KEY`：创建邀请码接口的管理密钥
 - `ALI_MODEL_ENDPOINT`
 - `ALI_API_KEY`
-- `ALI_VLM_MODEL`（默认 `qwen3.5-plus`）
+- `ALI_VLM_MODEL`（默认 `qwen-vl-plus`）
 - `ALI_DISABLE_THINKING`（默认 `true`，降低首 token 延迟）
 - `ALI_REQUEST_TIMEOUT_MS`（默认 `30000`）
 - `ALI_MAX_TOKENS`（默认 `1200`，可适当下调到 `700~1000` 提升速度）
@@ -121,6 +123,16 @@ PPT 状态机：
 - `POST /jobs/grades`（multipart `file` 或 `images`，也支持 JSON 提交 `file_id/upload_id`）
 - `GET /jobs/:job_id`
 
+### Quiz Grading Job（过关单批改）
+- `POST /jobs/quiz-key`：`{ "upload_id": "...", "hint_text": "可选提示" }` — 提取标准答案
+- `POST /jobs/quiz-grade`：`{ "upload_id": "...", "answer_key_id": "...", "append_to_result_id": "可选" }` — 批改学生答卷
+- `GET /answer-keys` — 列出用户的答案
+- `GET /answer-keys/:id` — 获取答案详情及题目
+- `DELETE /answer-keys/:id` — 删除答案（CASCADE 删除题目）
+- `GET /jobs/:job_id` — 轮询任务状态
+
+详细使用教程：[local-agent-mac/TUTORIAL.md](local-agent-mac/TUTORIAL.md)
+
 ### Download
 - `GET /download/:file_id`（需 Bearer JWT，或 `?token=<jwt>`）
 
@@ -193,7 +205,8 @@ npm run start:cli
 
 ## 9. 关键实现说明
 
-- Main Agent：意图识别（PPT/成绩/本地文件）并分发任务。
+- Main Agent：意图识别（PPT/成绩/过关单批改/作文批改/本地文件/天气）并分发任务。
+- Quiz Agent：两步流程（答案提取 + 学生批改），VLM OCR + 代码比对 + 可选二次验证，生成 4-sheet Excel 报告。
 - PPT Agent：图片理解 -> 文本合并 -> 大纲 JSON -> 生成 PPT。
 - ClawHub Skill：优先尝试 OpenClaw `/tools/invoke`（`skills_run`），兼容旧 `/skills/run`，失败自动本地增强模板 fallback 生成 `.pptx`。
 - Mock 机制：无模型 key 时自动启用，保证全链路可演示。
