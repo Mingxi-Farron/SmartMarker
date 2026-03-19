@@ -415,6 +415,8 @@ Phase 2 (VLM) ────┘
 | 现有功能回归 | LOW | Pattern-aligned 扩展 |
 | 首次用户不知道两步流程 | LOW | 首次引导文案（UX F1） |
 | 确认/修正消息路由 | LOW | Session history 上下文检测（G1/G2） |
+| "标准答案"未加入 inferIntent regex | LOW（已修复） | 不通过 regex 修复——改用 context-aware override：当 upload_id 存在 + 消息含"答案" + 无 answer_key_id 时，路由到 quiz handler Branch 5 创建 quiz_key job。 |
+| 前端 renderJobDone 消息不在 server history 中 | MEDIUM（已知限制） | quiz_key 完成后前端显示"答案已识别"是 addBubble（前端本地），不经过 /chat 保存到 server。导致后端 context-aware override 的 lastContent 检查无法匹配"答案已识别"。实际影响有限：用户说"没问题"时前端通用分支带着 answer_key_id 调 /chat，后端在 planned intent 正确时仍能走通；若 planned 为空则 fallback 到 quiz guidance。未来可通过前端在 renderJobDone 后调 /chat 写入 history 解决。 |
 
 ---
 

@@ -1832,14 +1832,21 @@ export class MainAgent {
     if (inferredIntent === 'essay_review') {
       intent = 'essay_review';
     }
-    // Context-aware quiz override: when user is in an active quiz conversation
-    // (answer_key_id present, no new upload), and the last assistant message was
-    // a quiz prompt ("答案已识别" or "需要你确认"), route to quiz handler so that
-    // confirmation/correction messages like "没问题" or "47:movable" reach
-    // handleQuizGradeIntent instead of falling through to generic chat.
-    if (inferredIntent === 'chat' && intent === 'chat' && context.answer_key_id && !context.upload_id) {
-      const lastAssistant = history.filter((m) => m.role === 'assistant').pop();
-      if (lastAssistant?.content?.includes('答案已识别') || lastAssistant?.content?.includes('需要你确认')) {
+    // Context-aware quiz overrides: route to quiz handler when context signals
+    // an active quiz workflow but inferIntent/planner didn't pick it up.
+    if (inferredIntent === 'chat' && intent === 'chat') {
+      if (context.answer_key_id && !context.upload_id) {
+        // Mid-flow: confirmation/correction after answer key extraction.
+        // Messages like "没问题" or "47:movable" lack quiz keywords.
+        const lastAssistant = history.filter((m) => m.role === 'assistant').pop();
+        if (lastAssistant?.content?.includes('答案已识别') || lastAssistant?.content?.includes('需要你确认')) {
+          intent = 'quiz_grade';
+        }
+      } else if (context.upload_id && !context.answer_key_id && /答案/.test(message)) {
+        // Step 1: user uploaded images + said something about "答案" (e.g., "这是标准答案").
+        // Frontend sends upload_id via context — route to quiz handler Branch 5
+        // which creates a quiz_key job. The /答案/ guard prevents hijacking
+        // unrelated uploads (e.g., "这是教材图片" should go to PPT, not quiz).
         intent = 'quiz_grade';
       }
     }

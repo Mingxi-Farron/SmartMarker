@@ -317,6 +317,41 @@ describe('handleChat quiz_grade dispatch', () => {
     expect(result.intent).not.toBe('quiz_grade');
   });
 
+  it('routes "这是标准答案" to quiz_grade when upload_id present (no answer_key_id)', async () => {
+    const fileId = db.createFile({
+      userId, kind: 'image', filename: 'key.jpg',
+      mime: 'image/jpeg', size: 100,
+      filePath: path.join(tmpDir, 'fake.jpg')
+    });
+    const uploadId = db.createUpload({ userId, fileIds: [fileId] });
+
+    const result = await mainAgent.handleChat({
+      userId,
+      sessionId,
+      message: '这是标准答案',
+      context: { upload_id: uploadId }
+    });
+    expect(result.intent).toBe('quiz_grade');
+    expect(result.action).toBe('job_created');
+  });
+
+  it('does NOT route "这是教材图片" to quiz_grade even with upload_id', async () => {
+    const fileId = db.createFile({
+      userId, kind: 'image', filename: 'textbook.jpg',
+      mime: 'image/jpeg', size: 100,
+      filePath: path.join(tmpDir, 'fake.jpg')
+    });
+    const uploadId = db.createUpload({ userId, fileIds: [fileId] });
+
+    const result = await mainAgent.handleChat({
+      userId,
+      sessionId,
+      message: '这是教材图片',
+      context: { upload_id: uploadId }
+    });
+    expect(result.intent).not.toBe('quiz_grade');
+  });
+
   it('dispatches quiz_grade intent from chat message', async () => {
     const result = await mainAgent.handleChat({
       userId,
