@@ -1106,13 +1106,22 @@ ${essayText}`;
       {
         type: 'text',
         text: `请从以下标准答案照片中逐题读出正确答案，输出 JSON。
+
+重要：correct_answer 只填学生需要手写填入的英文单词或短语。
+- 不要包含中文释义（如"喉咙"）
+- 不要包含词性标记（如"n."、"adj."、"v."）
+- 不要包含题干中已印好的部分
+- 例如："throat n. 喉咙" → correct_answer 只写 "throat"
+- 例如："take care of 照顾；护理" → correct_answer 只写 "take care of"
+- 例如："stay healthy and safe 保持健康和安全" → correct_answer 只写 "stay healthy and safe"
+
 JSON 结构：
 {
   "page_count": 照片页数（整数）,
   "questions": [
     {
       "number": 题号（整数），
-      "correct_answer": "正确答案文本",
+      "correct_answer": "仅英文单词或短语",
       "knowledge_tag": "知识点标签（如：词汇-名词、短语、句型、语法-时态 等）",
       "confidence": 0.0-1.0 的识别置信度
     }
@@ -1178,9 +1187,10 @@ ${safeHint ? `提示信息：${safeHint}` : ''}`
 
 要求：
 1. 姓名和学号从答卷顶部读取，读不到则姓名写"未知"，学号写"000000"。
-2. 每题答案原样抄写，不要修正拼写。
-3. 无法识别的题写"?"。
-4. 不要输出任何解释、JSON 或 markdown，只输出一行紧凑文本。`
+2. 只读取手写部分（通常是笔迹、非印刷体的文字）。忽略印刷的题干、中文提示、词性标记。
+3. 每题答案原样抄写，不要修正拼写。例如学生写了 "stommachache" 就原样输出，不要改成 "stomachache"。
+4. 如果某题只有印刷文字没有手写内容（学生没写），输出"?"。
+5. 不要输出任何解释、JSON 或 markdown，只输出一行紧凑文本。`
       },
     ];
 

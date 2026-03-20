@@ -30,6 +30,18 @@ export function parseCompactOcr(text) {
   return { studentName, studentIdNumber, answers };
 }
 
+// Strip Chinese characters, part-of-speech markers (n. adj. v. etc.), and extra whitespace
+// so "throat n. 喉咙" becomes "throat" for comparison purposes.
+function normalizeAnswer(raw) {
+  return String(raw || '')
+    .replace(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+/g, '') // remove Chinese + fullwidth chars
+    .replace(/\b(n|v|adj|adv|pron|prep|conj|int)\.\s*/gi, '')   // remove part-of-speech markers
+    .replace(/[;；,，]/g, ' ')                                    // normalize separators
+    .replace(/\s+/g, ' ')                                         // collapse whitespace
+    .trim()
+    .toLowerCase();
+}
+
 export function compareAnswers(studentAnswers, answerKeyQuestions) {
   const keyMap = new Map();
   for (const q of answerKeyQuestions) {
@@ -45,13 +57,19 @@ export function compareAnswers(studentAnswers, answerKeyQuestions) {
       results.push({ ...sa, isCorrect: false, confidence: 0.0 });
       continue;
     }
-    const correct = correctRaw.trim().toLowerCase();
-    const studentNorm = sa.studentAnswer.trim().toLowerCase();
-    const isCorrect = studentNorm === correct;
+    const correct = normalizeAnswer(correctRaw);
+    const studentNorm = normalizeAnswer(sa.studentAnswer);
     const isUnrecognized = sa.studentAnswer === '?';
 
-    if (isCorrect) {
-      results.push({ ...sa, isCorrect: true, confidence: 1.0 });
+    // Exact match after normalization
+    const isExact = studentNorm === correct;
+    // Containment match: student answer is the core part of a verbose answer key entry
+    // e.g., student "throat" matches answer key "throat 喉咙" (after normalization: "throat")
+    const isContained = !isExact && correct.length > 0 && studentNorm.length > 0 &&
+      (correct.startsWith(studentNorm) || studentNorm.startsWith(correct));
+
+    if (isExact || isContained) {
+      results.push({ ...sa, isCorrect: true, confidence: isExact ? 1.0 : 0.85 });
     } else if (isUnrecognized) {
       results.push({ ...sa, isCorrect: false, confidence: 1.0 });
     } else {

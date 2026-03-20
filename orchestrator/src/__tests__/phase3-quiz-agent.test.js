@@ -140,6 +140,48 @@ describe('compareAnswers', () => {
     // ? should NOT be in mismatches (not a candidate for VLM verification)
     expect(mismatches).toHaveLength(0);
   });
+
+  it('strips Chinese and POS markers from answer key before comparison', () => {
+    const verboseKey = [
+      { question_number: 1, correct_answer: 'throat n. 喉咙' },
+      { question_number: 2, correct_answer: 'stomachache n. 胃痛；肚子疼' },
+      { question_number: 3, correct_answer: 'take care of 照顾；护理' },
+    ];
+    const { results } = compareAnswers(
+      [
+        { questionNumber: 1, studentAnswer: 'throat' },
+        { questionNumber: 2, studentAnswer: 'stomachache' },
+        { questionNumber: 3, studentAnswer: 'take care of' },
+      ],
+      verboseKey
+    );
+    expect(results[0].isCorrect).toBe(true);
+    expect(results[1].isCorrect).toBe(true);
+    expect(results[2].isCorrect).toBe(true);
+  });
+
+  it('still catches genuine spelling errors after normalization', () => {
+    const verboseKey = [
+      { question_number: 1, correct_answer: 'throat n. 喉咙' },
+    ];
+    const { results, mismatches } = compareAnswers(
+      [{ questionNumber: 1, studentAnswer: 'throet' }],
+      verboseKey
+    );
+    expect(results[0].isCorrect).toBe(false);
+    expect(mismatches).toHaveLength(1);
+  });
+
+  it('handles containment match when student writes more or less', () => {
+    const key = [
+      { question_number: 1, correct_answer: 'stay healthy and safe' },
+    ];
+    // Student wrote "stay healthy and safe" exactly
+    const { results: r1 } = compareAnswers(
+      [{ questionNumber: 1, studentAnswer: 'stay healthy and safe' }], key);
+    expect(r1[0].isCorrect).toBe(true);
+    expect(r1[0].confidence).toBe(1.0);
+  });
 });
 
 // ─── Pure function: groupPhotosByStudent ───
