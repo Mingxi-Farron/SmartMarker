@@ -30,6 +30,71 @@ export function parseCompactOcr(text) {
   return { studentName, studentIdNumber, answers };
 }
 
+// Detect and fix systematic offset in student answers.
+// When OCR skips a question, all subsequent answers shift forward by 1.
+// This function checks if shifting answers by +1 (or +N) produces more matches,
+// and inserts "?" placeholders to realign.
+export function fixAnswerOffset(studentAnswers, answerKeyQuestions) {
+  if (studentAnswers.length === 0 || answerKeyQuestions.length === 0) {
+    return studentAnswers;
+  }
+
+  const keyMap = new Map();
+  for (const q of answerKeyQuestions) {
+    keyMap.set(q.question_number, normalizeAnswer(q.correct_answer));
+  }
+
+  // Count matches at current alignment
+  function countMatches(answers) {
+    let matches = 0;
+    for (const a of answers) {
+      const key = keyMap.get(a.questionNumber);
+      if (key && normalizeAnswer(a.studentAnswer) === key) matches++;
+    }
+    return matches;
+  }
+
+  const currentMatches = countMatches(studentAnswers);
+
+  // Try shifting: for each possible skip point, insert a "?" and renumber
+  let bestShift = null;
+  let bestMatches = currentMatches;
+
+  // Check offsets 1-3 (unlikely to skip more than 3 questions)
+  for (let skipCount = 1; skipCount <= 3; skipCount++) {
+    // Try inserting skip at each position
+    for (let skipAt = 1; skipAt <= studentAnswers.length; skipAt++) {
+      const shifted = [];
+      let srcIdx = 0;
+      for (let qn = 1; qn <= studentAnswers.length + skipCount; qn++) {
+        if (shifted.length >= answerKeyQuestions.length) break;
+        // Insert "?" for skipped positions
+        const skippedPositions = [];
+        for (let s = 0; s < skipCount; s++) skippedPositions.push(skipAt + s);
+        if (skippedPositions.includes(qn)) {
+          shifted.push({ questionNumber: qn, studentAnswer: '?' });
+        } else if (srcIdx < studentAnswers.length) {
+          shifted.push({ questionNumber: qn, studentAnswer: studentAnswers[srcIdx].studentAnswer });
+          srcIdx++;
+        }
+      }
+
+      const m = countMatches(shifted);
+      if (m > bestMatches) {
+        bestMatches = m;
+        bestShift = shifted;
+      }
+    }
+  }
+
+  // Only apply if the shift produces meaningfully more matches (at least 2 extra)
+  if (bestShift && bestMatches >= currentMatches + 2) {
+    return bestShift;
+  }
+
+  return studentAnswers;
+}
+
 // Strip Chinese characters, part-of-speech markers (n. adj. v. etc.), and extra whitespace
 // so "throat n. 喉咙" becomes "throat" for comparison purposes.
 function normalizeAnswer(raw) {
@@ -268,8 +333,11 @@ export class QuizAgent {
           continue;
         }
 
+        // Stage 1.5: Detect and fix systematic answer offset (OCR skipped a question)
+        const alignedAnswers = fixAnswerOffset(parsed.answers, answerKeyQuestions);
+
         // Stage 2: Code-based comparison
-        const { results, mismatches } = compareAnswers(parsed.answers, answerKeyQuestions);
+        const { results, mismatches } = compareAnswers(alignedAnswers, answerKeyQuestions);
 
         // Stage 3: Optional VLM verification for mismatches (batched, max 30 per call)
         // TECH_DEBT: verifyOcrMismatches is pure text (no images) but uses the VLM model.

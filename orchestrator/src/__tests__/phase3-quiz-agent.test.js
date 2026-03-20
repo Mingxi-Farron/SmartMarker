@@ -8,7 +8,7 @@ import { Storage } from '../storage.js';
 import { ModelClient } from '../agents/model-client.js';
 
 // We'll import these once quiz-agent.js exists
-let QuizAgent, parseCompactOcr, compareAnswers, groupPhotosByStudent;
+let QuizAgent, parseCompactOcr, compareAnswers, groupPhotosByStudent, fixAnswerOffset;
 
 let db, storage, modelClient, tmpDir, quizAgent;
 
@@ -30,6 +30,7 @@ beforeEach(async () => {
   parseCompactOcr = mod.parseCompactOcr;
   compareAnswers = mod.compareAnswers;
   groupPhotosByStudent = mod.groupPhotosByStudent;
+  fixAnswerOffset = mod.fixAnswerOffset;
 
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smartmarker-test-'));
   db = new DB(tmpDir);
@@ -216,6 +217,71 @@ describe('groupPhotosByStudent', () => {
   it('handles empty files', () => {
     const groups = groupPhotosByStudent([], 3);
     expect(groups).toHaveLength(0);
+  });
+});
+
+// ─── Pure function: fixAnswerOffset ───
+
+describe('fixAnswerOffset', () => {
+  const answerKey = [
+    { question_number: 1, correct_answer: 'throat' },
+    { question_number: 2, correct_answer: 'stomachache' },
+    { question_number: 3, correct_answer: 'headache' },
+    { question_number: 4, correct_answer: 'toothache' },
+    { question_number: 5, correct_answer: 'backache' },
+    { question_number: 6, correct_answer: 'take care of' },
+    { question_number: 7, correct_answer: 'health problems' },
+    { question_number: 8, correct_answer: 'physical conditions' },
+    { question_number: 9, correct_answer: 'stay healthy and safe' },
+    { question_number: 10, correct_answer: 'look well' },
+  ];
+
+  it('returns unchanged when answers are already aligned', () => {
+    const student = [
+      { questionNumber: 1, studentAnswer: 'throat' },
+      { questionNumber: 2, studentAnswer: 'stomachache' },
+      { questionNumber: 3, studentAnswer: 'headache' },
+    ];
+    const fixed = fixAnswerOffset(student, answerKey);
+    expect(fixed).toEqual(student);
+  });
+
+  it('detects and fixes single-question skip (the health problems bug)', () => {
+    // OCR skipped #7 (health problems), so #8's answer sits at position 7, etc.
+    const student = [
+      { questionNumber: 1, studentAnswer: 'throat' },
+      { questionNumber: 2, studentAnswer: 'stomachache' },
+      { questionNumber: 3, studentAnswer: 'headache' },
+      { questionNumber: 4, studentAnswer: 'toothache' },
+      { questionNumber: 5, studentAnswer: 'backache' },
+      { questionNumber: 6, studentAnswer: 'take care of' },
+      // #7 skipped — "health problems" missing
+      { questionNumber: 7, studentAnswer: 'physical conditions' },  // actually #8's answer
+      { questionNumber: 8, studentAnswer: 'stay healthy and safe' }, // actually #9's answer
+      { questionNumber: 9, studentAnswer: 'look well' },            // actually #10's answer
+    ];
+    const fixed = fixAnswerOffset(student, answerKey);
+    // After fix: #7 should be "?" and answers should shift back
+    expect(fixed[6].questionNumber).toBe(7);
+    expect(fixed[6].studentAnswer).toBe('?');
+    expect(fixed[7].questionNumber).toBe(8);
+    expect(fixed[7].studentAnswer).toBe('physical conditions');
+  });
+
+  it('does not "fix" when student genuinely got answers wrong', () => {
+    const student = [
+      { questionNumber: 1, studentAnswer: 'wrong1' },
+      { questionNumber: 2, studentAnswer: 'wrong2' },
+      { questionNumber: 3, studentAnswer: 'wrong3' },
+    ];
+    const fixed = fixAnswerOffset(student, answerKey);
+    // No systematic offset detected, should remain unchanged
+    expect(fixed).toEqual(student);
+  });
+
+  it('handles empty inputs', () => {
+    expect(fixAnswerOffset([], answerKey)).toEqual([]);
+    expect(fixAnswerOffset([{ questionNumber: 1, studentAnswer: 'x' }], [])).toEqual([{ questionNumber: 1, studentAnswer: 'x' }]);
   });
 });
 
