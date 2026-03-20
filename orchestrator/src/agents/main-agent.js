@@ -1614,8 +1614,12 @@ export class MainAgent {
       return { intent: 'quiz_grade', reply: '编号无效，请重新输入。', action: 'quiz_invalid_selection' };
     }
 
-    // Branch 1: Answer confirmation/correction (after "答案已识别")
-    if (lastContent.includes('答案已识别') && context.answer_key_id) {
+    // Branch 1: Answer confirmation/correction
+    // Triggers when answer_key_id is in context and no upload (i.e., user is reviewing
+    // answers, not uploading student papers). Previously required lastContent to include
+    // "答案已识别", but that message is rendered client-side by renderJobDone and never
+    // saved to server session history, so the check always failed in practice.
+    if (context.answer_key_id && !context.upload_id) {
       const correctionMatch = message.match(/^(\d+)\s*[:：]\s*(\S+)/);
       if (correctionMatch) {
         const corrections = [];
@@ -1838,10 +1842,9 @@ export class MainAgent {
       if (context.answer_key_id && !context.upload_id) {
         // Mid-flow: confirmation/correction after answer key extraction.
         // Messages like "没问题" or "47:movable" lack quiz keywords.
-        const lastAssistant = history.filter((m) => m.role === 'assistant').pop();
-        if (lastAssistant?.content?.includes('答案已识别') || lastAssistant?.content?.includes('需要你确认')) {
-          intent = 'quiz_grade';
-        }
+        // Route to quiz handler — Branch 1 handles confirmation/correction,
+        // Branch 3 handles query mode with quiz_result_id.
+        intent = 'quiz_grade';
       } else if (context.upload_id && !context.answer_key_id && /答案/.test(message)) {
         // Step 1: user uploaded images + said something about "答案" (e.g., "这是标准答案").
         // Frontend sends upload_id via context — route to quiz handler Branch 5

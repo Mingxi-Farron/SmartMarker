@@ -269,10 +269,9 @@ describe('handleChat quiz_grade dispatch', () => {
     sessionId = session.id;
   });
 
-  it('routes "没问题" to quiz_grade when answer_key_id in context and last assistant said "答案已识别"', async () => {
+  it('routes "没问题" to quiz_grade when answer_key_id in context (no lastContent dependency)', async () => {
     const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
-    // Seed history with the "答案已识别" assistant message
-    db.createMessage({ userId, sessionId, role: 'assistant', content: '✅ 答案已识别，共 20 题' });
+    // No need to seed "答案已识别" in history — Branch 1 now triggers on context alone
 
     const result = await mainAgent.handleChat({
       userId,
@@ -284,13 +283,12 @@ describe('handleChat quiz_grade dispatch', () => {
     expect(result.action).toBe('answer_key_confirmed');
   });
 
-  it('routes "47:movable" to quiz_grade when answer_key_id in context and last assistant said "答案已识别"', async () => {
+  it('routes "47:movable" to quiz_grade when answer_key_id in context', async () => {
     const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
     db.bulkInsertAnswerKeyQuestions({
       answerKeyId,
       questions: [{ questionNumber: 47, correctAnswer: 'mobile', knowledgeTag: '', confidence: 0.5 }]
     });
-    db.createMessage({ userId, sessionId, role: 'assistant', content: '✅ 答案已识别，共 20 题' });
 
     const result = await mainAgent.handleChat({
       userId,
@@ -302,10 +300,8 @@ describe('handleChat quiz_grade dispatch', () => {
     expect(result.action).toBe('answer_key_corrected');
   });
 
-  it('does NOT route unrelated chat to quiz_grade even if answer_key_id is in context', async () => {
+  it('weather intent still wins over quiz context when keywords match', async () => {
     const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
-    // Last assistant message is NOT quiz-related
-    db.createMessage({ userId, sessionId, role: 'assistant', content: '你好，有什么可以帮你的？' });
 
     const result = await mainAgent.handleChat({
       userId,
@@ -313,7 +309,7 @@ describe('handleChat quiz_grade dispatch', () => {
       message: '今天天气怎么样',
       context: { answer_key_id: answerKeyId }
     });
-    // Should NOT be quiz_grade — "今天天气怎么样" matches weather intent
+    // "今天天气怎么样" matches weather intent via inferIntent, which takes priority
     expect(result.intent).not.toBe('quiz_grade');
   });
 
