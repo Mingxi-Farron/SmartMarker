@@ -131,6 +131,11 @@ PPT 状态机：
 - `DELETE /answer-keys/:id` — 删除答案（CASCADE 删除题目）
 - `GET /jobs/:job_id` — 轮询任务状态
 
+答案确认阶段支持的交互指令：
+- 截断题目范围：`只考前22题` / `本次22题` / `保留前22题`
+- 修正答案：`47:movable` 或 `47:movable 63:complete`（多题一次修正）
+- 确认答案：`没问题` / `确认` / `ok`
+
 详细使用教程：[local-agent-mac/TUTORIAL.md](local-agent-mac/TUTORIAL.md)
 
 ### Download
