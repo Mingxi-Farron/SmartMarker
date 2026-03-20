@@ -847,6 +847,16 @@ export class DB {
       .run(nextAnswer, nextTag, nextConf, questionId);
   }
 
+  truncateAnswerKeyQuestions({ userId, answerKeyId, keepCount }) {
+    const key = this.getAnswerKeyForUser({ userId, answerKeyId });
+    if (!key) return 0;
+    const result = this.db
+      .prepare('DELETE FROM answer_key_questions WHERE answer_key_id = ? AND question_number > ?')
+      .run(answerKeyId, keepCount);
+    this.db.prepare('UPDATE answer_keys SET updated_at = ? WHERE id = ?').run(nowIso(), answerKeyId);
+    return result.changes;
+  }
+
   getAnswerKeyWithQuestions({ userId, answerKeyId }) {
     const answerKey = this.getAnswerKeyForUser({ userId, answerKeyId });
     if (!answerKey) {

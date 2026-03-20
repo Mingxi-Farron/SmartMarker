@@ -1620,6 +1620,24 @@ export class MainAgent {
     // "答案已识别", but that message is rendered client-side by renderJobDone and never
     // saved to server session history, so the check always failed in practice.
     if (context.answer_key_id && !context.upload_id) {
+      // Truncate: "只考前22题" / "本次22题" / "保留前22题"
+      const truncateMatch = message.match(/(?:只考|本次|保留|只要|只留)(?:前)?(\d+)(?:题|道)/);
+      if (truncateMatch) {
+        const keepCount = parseInt(truncateMatch[1], 10);
+        const deleted = this.db.truncateAnswerKeyQuestions({
+          userId,
+          answerKeyId: context.answer_key_id,
+          keepCount,
+        });
+        const keyData = this.db.getAnswerKeyWithQuestions({ userId, answerKeyId: context.answer_key_id });
+        const remaining = keyData ? keyData.questions.length : 0;
+        return {
+          intent: 'quiz_grade',
+          reply: `已截断，保留前 ${keepCount} 题（删除了 ${deleted} 题，当前共 ${remaining} 题）。\n确认无误请说"没问题"。`,
+          action: 'answer_key_truncated',
+        };
+      }
+
       const correctionMatch = message.match(/^(\d+)\s*[:：]\s*(\S+)/);
       if (correctionMatch) {
         const corrections = [];

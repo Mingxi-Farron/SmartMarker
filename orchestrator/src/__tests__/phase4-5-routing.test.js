@@ -228,6 +228,30 @@ describe('handleQuizGradeIntent', () => {
     expect(q47.correct_answer).toBe('movable');
   });
 
+  it('truncates answer key when teacher says "只考前22题"', async () => {
+    const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
+    const questions = [];
+    for (let i = 1; i <= 50; i++) {
+      questions.push({ questionNumber: i, correctAnswer: `word${i}`, knowledgeTag: '', confidence: 1.0 });
+    }
+    db.bulkInsertAnswerKeyQuestions({ answerKeyId, questions });
+
+    const result = await mainAgent.handleQuizGradeIntent({
+      userId,
+      message: '只考前22题',
+      context: { answer_key_id: answerKeyId },
+      history: [],
+      sessionId
+    });
+    expect(result.action).toBe('answer_key_truncated');
+    expect(result.reply).toContain('22');
+
+    // Verify DB
+    const remaining = db.listQuestionsForAnswerKey({ answerKeyId });
+    expect(remaining).toHaveLength(22);
+    expect(remaining[remaining.length - 1].question_number).toBe(22);
+  });
+
   it('handles review verdict ("1 3" after "需要你确认")', async () => {
     const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
     const resultId = db.createQuizResult({ userId, answerKeyId });
