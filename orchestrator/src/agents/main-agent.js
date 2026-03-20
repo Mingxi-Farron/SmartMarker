@@ -1854,6 +1854,9 @@ export class MainAgent {
     if (inferredIntent === 'essay_review') {
       intent = 'essay_review';
     }
+    if (inferredIntent === 'quiz_grade') {
+      intent = 'quiz_grade';
+    }
     // Context-aware quiz overrides: route to quiz handler when context signals
     // an active quiz workflow but inferIntent/planner didn't pick it up.
     if (inferredIntent === 'chat' && intent === 'chat') {
