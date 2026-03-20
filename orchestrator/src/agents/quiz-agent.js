@@ -261,7 +261,7 @@ export class QuizAgent {
 
       try {
         // Stage 1: OCR
-        const ocrText = await this.modelClient.ocrStudentAnswers({ imagePaths });
+        const ocrText = await this.modelClient.ocrStudentAnswers({ imagePaths, questionCount: answerKeyQuestions.length });
         const parsed = parseCompactOcr(ocrText);
         if (!parsed || parsed.answers.length === 0) {
           resultAcc.failed_students.push({ photo_index: idx * pageCount, reason: '无法解析 OCR 结果' });
