@@ -1,5 +1,5 @@
 (function main() {
-  const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
+  const DEFAULT_SERVER_URL = 'http://47.109.111.160:8080';
   const SESSION_INDEX_CACHE_KEY = 'teacher-ai-session-index-v1';
   const SESSION_MESSAGE_CACHE_KEY = 'teacher-ai-session-messages-v1';
 
