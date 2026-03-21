@@ -1,12 +1,12 @@
 (function main() {
-  const DEFAULT_SERVER_URL = 'http://47.109.111.160:8080';
+  const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
   const SESSION_INDEX_CACHE_KEY = 'teacher-ai-session-index-v1';
   const SESSION_MESSAGE_CACHE_KEY = 'teacher-ai-session-messages-v1';
 
   const MODE_CONFIG = {
     main: {
       title: 'Main Agent Chat',
-      subtitle: '直接说需求，系统自动路由：PPT / 成绩 / 作文批改 / 本地文件操作 / 天气',
+      subtitle: '直接说需求，系统自动路由：PPT / 成绩 / 过关单批改 / 作文批改 / 本地文件操作 / 天气',
       placeholder: '直接输入：例如“检查这篇英语作文的病句和拼写，并判断是否符合主题”',
     },
   };
@@ -659,6 +659,10 @@
       return 'grades';
     }
 
+    const essayBatchHint = /(批量.*作文|全班.*作文|所有.*作文|逐篇批改|多篇作文|班级.*作文)/i;
+    if (essayBatchHint.test(message) && hasImage) {
+      return 'essay_batch';
+    }
     const quizHint = /(过关单|批改过关|答案录入|答题卡|批改试卷|上传.*答案|答案.*上传|开始批改)/i;
     if (quizHint.test(message)) {
       const sid = state.activeSessionId;
@@ -780,6 +784,9 @@
             } else {
               text += '\n\n确认无误请说"没问题"，然后上传学生答卷照片。';
             }
+            if (questionCount > 20) {
+              text += `\n\n💡 如果本次只考部分题目，可以说"只考前N题"（如"只考前22题"）或"跳过X到Y题"（如"跳过23到35题"）。`;
+            }
             appendMessage({ sessionId, role: 'assistant', content: text });
           } else if (job.type === 'quiz_grade') {
             const summary = result.summary || {};
@@ -803,6 +810,28 @@
             if (lowConf.length > 0) {
               text += `\n⚠️ ${lowConf.length} 道题需要你确认（OCR 不确定）`;
               text += '\n  回复"查看确认题"可逐条复核，或说"全部按系统判定"跳过。';
+            }
+            if (failed.length > 0) {
+              text += `\n\n⚠️ ${failed.length} 位学生识别失败：`;
+              for (const f of failed) text += `\n  - 第 ${f.photo_index + 1} 张照片起：${f.reason}`;
+            }
+            appendMessage({ sessionId, role: 'assistant', content: text, links });
+          } else if (job.type === 'essay_review') {
+            const summary = result.summary || {};
+            const failed = result.failed_students || [];
+            const links = [];
+            if (result.xlsx_download_url) links.push({ label: '下载 Excel', url: result.xlsx_download_url });
+            if (result.csv_download_url) links.push({ label: '下载 CSV', url: result.csv_download_url });
+            let text = `✅ 作文批改完成！共 ${summary.student_count || '-'} 位学生`;
+            text += `\n\n📊 班级概况：平均 ${summary.average_score ?? '-'}/${summary.full_score ?? '-'}`;
+            if (summary.max_student) text += ` | 最高 ${summary.max_score} ${summary.max_student}`;
+            if (summary.min_student) text += ` | 最低 ${summary.min_score} ${summary.min_student}`;
+            text += `\n拼写错误总计：${summary.total_spelling ?? 0}，语法错误总计：${summary.total_grammar ?? 0}`;
+            if (summary.top_errors?.length > 0) {
+              text += '\n\n常见错误：';
+              for (const e of summary.top_errors.slice(0, 3)) {
+                text += `\n  ${e.original} → ${e.suggestion}（${e.type}，${e.count}人）`;
+              }
             }
             if (failed.length > 0) {
               text += `\n\n⚠️ ${failed.length} 位学生识别失败：`;
@@ -1093,6 +1122,31 @@
           appendMessage({ sessionId, role: 'system', content: '💡 请确保照片按学生顺序排列：学生1第1页→学生1第2页→学生2第1页→学生2第2页...' });
         }
         upsertPending('正在提交批改任务...', sessionId);
+        const reply = await window.desktopApi.sendChat(chatPayload);
+        await handleAgentReply(reply, sessionId, { userCreatedAt });
+        return;
+      }
+
+      if (intent === 'essay_batch' && files.length > 0) {
+        const imageFiles = files.filter((f) => /\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(f));
+        if (imageFiles.length === 0) throw new Error('批量批改作文需要上传作文照片');
+        setStatusHint('上传作文照片中', 'busy');
+        upsertPending('正在上传作文照片...', sessionId);
+        const upload = await window.desktopApi.uploadImages({ filePaths: imageFiles });
+        setPendingUploadId(sessionId, upload.upload_id);
+        const pagesMatch = message.match(/每(?:篇|人|份)(\d+)(?:页|张)/);
+        const pagesPerEssay = pagesMatch ? parseInt(pagesMatch[1], 10) : 1;
+        const studentEst = Math.floor(imageFiles.length / pagesPerEssay);
+        const rem = imageFiles.length % pagesPerEssay;
+        let hint = `已收到 ${imageFiles.length} 张作文照片（约 ${studentEst} 位学生，每篇 ${pagesPerEssay} 页）`;
+        if (rem !== 0) hint += `\n⚠️ ${imageFiles.length} 张不是 ${pagesPerEssay} 的整数倍，最后一位学生可能缺页。`;
+        appendMessage({ sessionId, role: 'system', content: hint });
+        const chatPayload = {
+          message: message || '批量批改作文',
+          session_id: sessionId || undefined,
+          upload_id: upload.upload_id,
+        };
+        upsertPending('正在提交批量作文批改...', sessionId);
         const reply = await window.desktopApi.sendChat(chatPayload);
         await handleAgentReply(reply, sessionId, { userCreatedAt });
         return;

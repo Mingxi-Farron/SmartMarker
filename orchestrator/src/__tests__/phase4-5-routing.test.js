@@ -252,6 +252,52 @@ describe('handleQuizGradeIntent', () => {
     expect(remaining[remaining.length - 1].question_number).toBe(22);
   });
 
+  it('skips answer key questions when teacher says "跳过23到35题"', async () => {
+    const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
+    const questions = [];
+    for (let i = 1; i <= 50; i++) {
+      questions.push({ questionNumber: i, correctAnswer: `word${i}`, knowledgeTag: '', confidence: 1.0 });
+    }
+    db.bulkInsertAnswerKeyQuestions({ answerKeyId, questions });
+
+    const result = await mainAgent.handleQuizGradeIntent({
+      userId,
+      message: '跳过23到35题',
+      context: { answer_key_id: answerKeyId },
+      history: [],
+      sessionId
+    });
+    expect(result.action).toBe('answer_key_skipped');
+    expect(result.reply).toContain('23-35');
+
+    const remaining = db.listQuestionsForAnswerKey({ answerKeyId });
+    expect(remaining).toHaveLength(37); // 50 - 13 = 37
+    expect(remaining.find(q => q.question_number === 22)).toBeDefined();
+    expect(remaining.find(q => q.question_number === 23)).toBeUndefined();
+    expect(remaining.find(q => q.question_number === 35)).toBeUndefined();
+    expect(remaining.find(q => q.question_number === 36)).toBeDefined();
+  });
+
+  it('handles "不考10-15题" variant', async () => {
+    const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
+    const questions = [];
+    for (let i = 1; i <= 20; i++) {
+      questions.push({ questionNumber: i, correctAnswer: `w${i}`, knowledgeTag: '', confidence: 1.0 });
+    }
+    db.bulkInsertAnswerKeyQuestions({ answerKeyId, questions });
+
+    const result = await mainAgent.handleQuizGradeIntent({
+      userId,
+      message: '不考10-15题',
+      context: { answer_key_id: answerKeyId },
+      history: [],
+      sessionId
+    });
+    expect(result.action).toBe('answer_key_skipped');
+    const remaining = db.listQuestionsForAnswerKey({ answerKeyId });
+    expect(remaining).toHaveLength(14); // 20 - 6 = 14
+  });
+
   it('handles review verdict ("1 3" after "需要你确认")', async () => {
     const answerKeyId = db.createAnswerKey({ userId, title: 'test', pageCount: 1 });
     const resultId = db.createQuizResult({ userId, answerKeyId });

@@ -21,7 +21,7 @@ const DEVICE_FILE = path.join(CONFIG_DIR, 'device.json');
 const TOKEN_FALLBACK_FILE = path.join(CONFIG_DIR, '.device-token');
 const LOG_FILE = path.join(os.homedir(), 'Library', 'Logs', 'teacher-ai-desktop.log');
 const TOKEN_SERVICE = 'teacher-ai-desktop-device-token';
-const DEFAULT_SERVER_URL = 'http://47.109.111.160:8080';
+const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
 
 const runtime = {
   mainWindow: null,

@@ -198,6 +198,36 @@ export class DB {
       CREATE INDEX IF NOT EXISTS idx_answer_key_questions_key ON answer_key_questions(answer_key_id, question_number);
       CREATE INDEX IF NOT EXISTS idx_quiz_results_user ON quiz_results(user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_quiz_result_answers_result ON quiz_result_answers(result_id, student_name, question_number);
+
+      CREATE TABLE IF NOT EXISTS essay_results (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        topic TEXT NOT NULL DEFAULT '',
+        pages_per_essay INTEGER NOT NULL DEFAULT 1,
+        source_job_id TEXT,
+        student_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS essay_result_items (
+        id TEXT PRIMARY KEY,
+        result_id TEXT NOT NULL,
+        student_name TEXT NOT NULL DEFAULT '',
+        estimated_score REAL,
+        full_score REAL,
+        spelling_count INTEGER NOT NULL DEFAULT 0,
+        grammar_count INTEGER NOT NULL DEFAULT 0,
+        topic_match_score REAL,
+        transcription TEXT NOT NULL DEFAULT '',
+        review_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (result_id) REFERENCES essay_results(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_essay_results_user ON essay_results(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_essay_result_items_result ON essay_result_items(result_id, student_name);
     `);
 
     this.runMigrations();
@@ -857,6 +887,16 @@ export class DB {
     return result.changes;
   }
 
+  skipAnswerKeyQuestions({ userId, answerKeyId, fromNumber, toNumber }) {
+    const key = this.getAnswerKeyForUser({ userId, answerKeyId });
+    if (!key) return 0;
+    const result = this.db
+      .prepare('DELETE FROM answer_key_questions WHERE answer_key_id = ? AND question_number >= ? AND question_number <= ?')
+      .run(answerKeyId, fromNumber, toNumber);
+    this.db.prepare('UPDATE answer_keys SET updated_at = ? WHERE id = ?').run(nowIso(), answerKeyId);
+    return result.changes;
+  }
+
   getAnswerKeyWithQuestions({ userId, answerKeyId }) {
     const answerKey = this.getAnswerKeyForUser({ userId, answerKeyId });
     if (!answerKey) {
@@ -1028,5 +1068,82 @@ export class DB {
         'SELECT id, result_id, student_name, student_id_number, question_number, student_answer, is_correct, confidence, created_at FROM quiz_result_answers WHERE result_id = ? AND confidence <= ? ORDER BY confidence ASC',
       )
       .all(resultId, maxConfidence);
+  }
+
+  // ─── essay_results CRUD ───
+
+  createEssayResult({ userId, topic = '', pagesPerEssay = 1, sourceJobId = null }) {
+    const id = randomUUID();
+    const now = nowIso();
+    this.db
+      .prepare('INSERT INTO essay_results(id, user_id, topic, pages_per_essay, source_job_id, student_count, created_at, updated_at) VALUES(?, ?, ?, ?, ?, 0, ?, ?)')
+      .run(id, userId, topic, pagesPerEssay, sourceJobId, now, now);
+    return id;
+  }
+
+  getEssayResultForUser({ userId, resultId }) {
+    return (
+      this.db
+        .prepare('SELECT id, user_id, topic, pages_per_essay, source_job_id, student_count, created_at, updated_at FROM essay_results WHERE id = ? AND user_id = ?')
+        .get(resultId, userId) || null
+    );
+  }
+
+  listEssayResultsForUser({ userId, limit = 50 }) {
+    return this.db
+      .prepare('SELECT id, user_id, topic, pages_per_essay, source_job_id, student_count, created_at, updated_at FROM essay_results WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
+      .all(userId, limit);
+  }
+
+  deleteEssayResultForUser({ userId, resultId }) {
+    const existing = this.db.prepare('SELECT id FROM essay_results WHERE id = ? AND user_id = ?').get(resultId, userId);
+    if (!existing) return null;
+    this.db.prepare('DELETE FROM essay_results WHERE id = ?').run(resultId);
+    return { deleted: true };
+  }
+
+  // ─── essay_result_items CRUD ───
+
+  insertEssayResultItem({ resultId, studentName, estimatedScore, fullScore, spellingCount, grammarCount, topicMatchScore, transcription, reviewJson }) {
+    const id = randomUUID();
+    const now = nowIso();
+    this.db
+      .prepare('INSERT INTO essay_result_items(id, result_id, student_name, estimated_score, full_score, spelling_count, grammar_count, topic_match_score, transcription, review_json, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, resultId, studentName || '', estimatedScore ?? null, fullScore ?? null, spellingCount || 0, grammarCount || 0, topicMatchScore ?? null, transcription || '', reviewJson || '{}', now);
+
+    const cnt = this.db
+      .prepare('SELECT COUNT(*) AS cnt FROM essay_result_items WHERE result_id = ?')
+      .get(resultId);
+    this.db
+      .prepare('UPDATE essay_results SET student_count = ?, updated_at = ? WHERE id = ? AND user_id = (SELECT user_id FROM essay_results WHERE id = ?)')
+      .run(cnt.cnt, nowIso(), resultId, resultId);
+    return id;
+  }
+
+  listEssayResultItems({ userId, resultId }) {
+    return this.db
+      .prepare(`SELECT eri.id, eri.result_id, eri.student_name, eri.estimated_score, eri.full_score, eri.spelling_count, eri.grammar_count, eri.topic_match_score, eri.transcription, eri.review_json, eri.created_at
+        FROM essay_result_items eri
+        JOIN essay_results er ON er.id = eri.result_id
+        WHERE eri.result_id = ? AND er.user_id = ?
+        ORDER BY eri.student_name ASC`)
+      .all(resultId, userId);
+  }
+
+  getEssayResultSummary({ userId, resultId }) {
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) AS student_count,
+        AVG(eri.estimated_score) AS avg_score,
+        MAX(eri.estimated_score) AS max_score,
+        MIN(eri.estimated_score) AS min_score,
+        MAX(eri.full_score) AS full_score,
+        SUM(eri.spelling_count) AS total_spelling,
+        SUM(eri.grammar_count) AS total_grammar
+      FROM essay_result_items eri
+      JOIN essay_results er ON er.id = eri.result_id
+      WHERE eri.result_id = ? AND er.user_id = ?
+    `).get(resultId, userId);
+    return row || { student_count: 0, avg_score: 0, max_score: 0, min_score: 0, full_score: 0, total_spelling: 0, total_grammar: 0 };
   }
 }

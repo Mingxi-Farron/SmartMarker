@@ -18,6 +18,7 @@ import { GradesAgent } from './agents/grades-agent.js';
 import { MainAgent } from './agents/main-agent.js';
 import { WeatherService } from './agents/weather-service.js';
 import { QuizAgent } from './agents/quiz-agent.js';
+import { EssayAgent } from './agents/essay-agent.js';
 import { JobWorker } from './jobs/worker.js';
 import { DeviceHub } from './ws/device-hub.js';
 
@@ -52,10 +53,11 @@ const pptClient = new PptClient({
 const pptAgent = new PptAgent({ db, modelClient, pptClient, storage });
 const gradesAgent = new GradesAgent({ db, storage, modelClient, publicBaseUrl: config.publicBaseUrl });
 const quizAgent = new QuizAgent({ db, storage, modelClient, publicBaseUrl: config.publicBaseUrl });
+const essayAgent = new EssayAgent({ db, storage, modelClient, publicBaseUrl: config.publicBaseUrl });
 const hub = new DeviceHub({ db, logger: app.log });
 const weatherService = new WeatherService();
 const mainAgent = new MainAgent({ db, modelClient, hub, weatherService });
-const worker = new JobWorker({ db, pptAgent, gradesAgent, quizAgent, logger: app.log });
+const worker = new JobWorker({ db, pptAgent, gradesAgent, quizAgent, essayAgent, logger: app.log });
 
 await app.register(fastifyJwt, { secret: config.jwtSecret });
 await app.register(fastifyMultipart, {
@@ -465,6 +467,26 @@ app.delete('/answer-keys/:id', { preHandler: [app.auth] }, async (req, reply) =>
     return reply.code(404).send({ error: 'answer_key 不存在' });
   }
   return { ok: true };
+});
+
+// ─── Essay batch review endpoint ───
+
+app.post('/jobs/essay-review', { preHandler: [app.auth] }, async (req, reply) => {
+  const userId = req.user.user_id;
+  const { upload_id, topic, pages_per_essay } = req.body || {};
+  if (!upload_id) {
+    return reply.code(400).send({ error: '缺少 upload_id' });
+  }
+  const upload = db.getUploadWithFiles({ userId, uploadId: upload_id });
+  if (!upload) {
+    return reply.code(404).send({ error: 'upload 不存在' });
+  }
+  const jobId = db.createJob({
+    userId,
+    type: 'essay_review',
+    input: { upload_id, topic: String(topic || ''), pages_per_essay: Math.max(1, Math.floor(Number(pages_per_essay) || 1)) }
+  });
+  return { job_id: jobId, status: 'queued' };
 });
 
 app.get('/jobs/:jobId', { preHandler: [app.auth] }, async (req, reply) => {

@@ -1,9 +1,10 @@
 export class JobWorker {
-  constructor({ db, pptAgent, gradesAgent, quizAgent, logger }) {
+  constructor({ db, pptAgent, gradesAgent, quizAgent, essayAgent, logger }) {
     this.db = db;
     this.pptAgent = pptAgent;
     this.gradesAgent = gradesAgent;
     this.quizAgent = quizAgent;
+    this.essayAgent = essayAgent;
     this.logger = logger;
     this.timer = null;
     this.running = false;
@@ -46,6 +47,8 @@ export class JobWorker {
         await this.gradesAgent.run(currentJob);
       } else if (currentJob.type === 'quiz_key' || currentJob.type === 'quiz_grade') {
         await this.quizAgent.run(currentJob);
+      } else if (currentJob.type === 'essay_review') {
+        await this.essayAgent.run(currentJob);
       } else {
         this.db.updateJob({
           jobId: currentJob.id,

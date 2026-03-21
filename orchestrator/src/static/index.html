@@ -258,7 +258,7 @@
           <textarea id="messageInput" placeholder="先输入邀请码登录。登录后可直接说：‘根据这些教材图生成PPT’ 或 ‘分析这个成绩表’"></textarea>
           <button class="send-btn" id="sendBtn">发送</button>
         </div>
-        <div class="hint">单一对话流：发送文字 + 附件即可，系统会自动走 PPT / 成绩分析 / 作文批改流程。</div>
+        <div class="hint">单一对话流：发送文字 + 附件即可，系统会自动走 PPT / 成绩分析 / 过关单批改 / 作文批改流程。</div>
       </section>
     </div>
 
@@ -440,6 +440,10 @@
         if (hasSheet) {
           return 'grades';
         }
+        const essayBatchHint = /(批量.*作文|全班.*作文|所有.*作文|逐篇批改|多篇作文|班级.*作文)/i;
+        if (essayBatchHint.test(t) && hasImage) {
+          return 'essay_batch';
+        }
         const quizHint = /(过关单|批改过关|答案录入|答题卡|批改试卷|上传.*答案|答案.*上传|开始批改)/i;
         if (quizHint.test(t)) {
           if (hasImage && !state.quizAnswerKey) return 'quiz_answer_key';
@@ -536,6 +540,9 @@
           } else {
             text += '\n\n确认无误请说"没问题"，然后上传学生答卷照片。';
           }
+          if (questionCount > 20) {
+            text += `\n\n💡 如果本次只考部分题目，可以说"只考前N题"（如"只考前22题"）或"跳过X到Y题"（如"跳过23到35题"）。`;
+          }
           addBubble('assistant', text);
           return;
         }
@@ -569,6 +576,38 @@
           if (lowConf.length > 0) {
             text += `\n⚠️ ${lowConf.length} 道题需要你确认（OCR 不确定）`;
             text += '\n  回复"查看确认题"可逐条复核，或说"全部按系统判定"跳过。';
+          }
+          if (failed.length > 0) {
+            text += `\n\n⚠️ ${failed.length} 位学生识别失败：`;
+            for (const f of failed) {
+              text += `\n  - 第 ${f.photo_index + 1} 张照片起：${f.reason}`;
+            }
+          }
+          addBubble('assistant', text, links);
+          return;
+        }
+
+        if (job.type === 'essay_review') {
+          const summary = result.summary || {};
+          const failed = result.failed_students || [];
+          const links = [];
+          if (result.xlsx_download_url) {
+            links.push({ label: '下载 Excel', url: attachTokenIfNeeded(result.xlsx_download_url) });
+          }
+          if (result.csv_download_url) {
+            links.push({ label: '下载 CSV', url: attachTokenIfNeeded(result.csv_download_url) });
+          }
+
+          let text = `✅ 作文批改完成！共 ${summary.student_count || '-'} 位学生`;
+          text += `\n\n📊 班级概况：平均 ${summary.average_score ?? '-'}/${summary.full_score ?? '-'}`;
+          if (summary.max_student) text += ` | 最高 ${summary.max_score} ${summary.max_student}`;
+          if (summary.min_student) text += ` | 最低 ${summary.min_score} ${summary.min_student}`;
+          text += `\n拼写错误总计：${summary.total_spelling ?? 0}，语法错误总计：${summary.total_grammar ?? 0}`;
+          if (summary.top_errors?.length > 0) {
+            text += '\n\n常见错误：';
+            for (const e of summary.top_errors.slice(0, 3)) {
+              text += `\n  ${e.original} → ${e.suggestion}（${e.type}，${e.count}人）`;
+            }
           }
           if (failed.length > 0) {
             text += `\n\n⚠️ ${failed.length} 位学生识别失败：`;
@@ -739,6 +778,24 @@
               }
             }
             const reply = await callMainAgent(text || '开始批改', context);
+            await handleAgentReply(reply);
+            clearComposer();
+            return;
+          }
+
+          if (intent === 'essay_batch' && files.length > 0) {
+            const images = files.filter((f) => f.type.startsWith('image/'));
+            if (images.length === 0) throw new Error('批量批改作文需要上传作文照片');
+            const upload = await uploadImages(images);
+            state.pendingUploadId = upload.upload_id;
+            const pagesMatch = text.match(/每(?:篇|人|份)(\d+)(?:页|张)/);
+            const pagesPerEssay = pagesMatch ? parseInt(pagesMatch[1], 10) : 1;
+            const studentEst = Math.floor(images.length / pagesPerEssay);
+            const rem = images.length % pagesPerEssay;
+            let hint = `已收到 ${images.length} 张作文照片（约 ${studentEst} 位学生，每篇 ${pagesPerEssay} 页）`;
+            if (rem !== 0) hint += `\n⚠️ ${images.length} 张不是 ${pagesPerEssay} 的整数倍，最后一位学生可能缺页。`;
+            addBubble('system', hint);
+            const reply = await callMainAgent(text || '批量批改作文', { upload_id: upload.upload_id });
             await handleAgentReply(reply);
             clearComposer();
             return;

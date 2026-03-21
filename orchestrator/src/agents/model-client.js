@@ -436,6 +436,10 @@ function normalizeEssayReview(raw) {
     : null;
 
   return {
+    student_name: safeString(
+      pickFirst(raw, ['student_name', 'name', '学生姓名', '姓名']),
+      '',
+    ),
     transcription: safeString(
       pickFirst(raw, ['transcription', 'essay_text', 'text', 'ocr_text', '转写文本', '作文文本']),
       '',
@@ -905,6 +909,7 @@ ${outlineJson}`;
   async reviewEssayFromImages({ imagePaths = [], topic = '', request = '' }) {
     if (this.mockMode) {
       return {
+        student_name: '张三',
         transcription: 'This is a mock essay text.',
         requirement_summary: ['标题需要写出最喜欢的菜名', '正文要说明喜欢这道菜的原因或故事', '需要写 ingredients 和制作步骤'],
         requirement_mismatches: ['制作步骤不够完整', '语言错误会影响语法与拼写项得分'],
@@ -959,6 +964,7 @@ ${outlineJson}`;
       '请读取这些英语作文图片。若图片里同时包含作文题目要求、评分点和学生作文，请先抽取要求，再按要求客观评分。输出严格 JSON，不要输出 markdown 或额外解释。',
       'JSON 结构必须为：',
       '{',
+      '  "student_name": "从卷面顶部读取的学生姓名，读不到则留空字符串",',
       '  "transcription": "完整英文作文转写文本",',
       '  "requirement_summary": ["作文要求1", "作文要求2"],',
       '  "requirement_mismatches": ["当前作文与要求不一致或缺失的点"],',

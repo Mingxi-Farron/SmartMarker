@@ -1345,12 +1345,21 @@ export class MainAgent {
     }
   }
 
+  extractPagesPerEssay(message) {
+    const match = String(message || '').match(/每(?:篇|人|份)(\d+)(?:页|张)/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  isBatchEssayRequest(message) {
+    return /(批量|全班|所有|逐篇|多篇|班级)/.test(String(message || ''));
+  }
+
   async handleEssayReviewIntent({ userId, message, context = {}, history = [], planned = null }) {
     if (!context.upload_id) {
       return {
         intent: 'essay_review',
         reply:
-          '识别到你要检查英语作文。请先上传包含作文内容的图片；如果图片里也有题目要求/评分标准，我会按 requirement 逐项打分、指出缺项并检查病句与拼写。若你还想按自定义主题单独评分，请在消息里补一句“当前主题是 …”。',
+          '识别到你要检查英语作文。请先上传包含作文内容的图片；如果图片里也有题目要求/评分标准，我会按 requirement 逐项打分、指出缺项并检查病句与拼写。若你还想按自定义主题单独评分，请在消息里补一句”当前主题是 …”。\n\n💡 批量批改全班作文？上传所有学生作文照片后说”批量批改作文”即可。如果每篇作文有多页，请注明”每篇2页”。',
         action: 'need_essay_upload',
       };
     }
@@ -1378,6 +1387,37 @@ export class MainAgent {
       };
     }
 
+    // Batch mode: triggered by batch keywords or pages_per_essay in message
+    const pagesPerEssay = this.extractPagesPerEssay(message) || 1;
+    const isBatch = this.isBatchEssayRequest(message);
+
+    if (isBatch) {
+      const topic = this.extractEssayTopic(message, history, planned?.essay_topic);
+      const studentCount = Math.floor(imageFiles.length / pagesPerEssay);
+      const remainder = imageFiles.length % pagesPerEssay;
+      const jobId = this.db.createJob({
+        userId,
+        type: 'essay_review',
+        input: {
+          upload_id: context.upload_id,
+          topic: topic || '',
+          pages_per_essay: pagesPerEssay,
+          request: message,
+        },
+      });
+      let hint = `收到 ${imageFiles.length} 张作文照片（约 ${studentCount} 位学生，每篇 ${pagesPerEssay} 页），正在批量批改...`;
+      if (remainder !== 0) {
+        hint += `\n⚠️ ${imageFiles.length} 张不是 ${pagesPerEssay} 的整数倍，最后一位学生可能缺页。`;
+      }
+      return {
+        intent: 'essay_review',
+        reply: hint,
+        action: 'job_created',
+        job_id: jobId,
+      };
+    }
+
+    // Single-essay mode (existing behavior)
     const topic = this.extractEssayTopic(message, history, planned?.essay_topic);
     try {
       const review = await this.modelClient.reviewEssayFromImages({
@@ -1614,12 +1654,10 @@ export class MainAgent {
       return { intent: 'quiz_grade', reply: '编号无效，请重新输入。', action: 'quiz_invalid_selection' };
     }
 
-    // Branch 1: Answer confirmation/correction
-    // Triggers when answer_key_id is in context and no upload (i.e., user is reviewing
-    // answers, not uploading student papers). Previously required lastContent to include
-    // "答案已识别", but that message is rendered client-side by renderJobDone and never
-    // saved to server session history, so the check always failed in practice.
-    if (context.answer_key_id && !context.upload_id) {
+    // Early checks: truncate / correct / confirm — only need answer_key_id, regardless of upload_id.
+    // These are explicit user commands that should always work during the answer review phase,
+    // even if the frontend still has a stale pendingUploadId in context.
+    if (context.answer_key_id) {
       // Truncate: "只考前22题" / "本次22题" / "保留前22题"
       const truncateMatch = message.match(/(?:只考|本次|保留|只要|只留)(?:前)?(\d+)(?:题|道)/);
       if (truncateMatch) {
@@ -1635,6 +1673,29 @@ export class MainAgent {
           intent: 'quiz_grade',
           reply: `已截断，保留前 ${keepCount} 题（删除了 ${deleted} 题，当前共 ${remaining} 题）。\n确认无误请说"没问题"。`,
           action: 'answer_key_truncated',
+        };
+      }
+
+      // Skip range: "跳过23到35题" / "不考23-35题" / "去掉第23到35题" / "删除23-35题"
+      const skipMatch = message.match(/(?:跳过|不考|去掉|删除)(?:第)?(\d+)[到至\-~](\d+)(?:题|道)/);
+      if (skipMatch) {
+        const from = parseInt(skipMatch[1], 10);
+        const to = parseInt(skipMatch[2], 10);
+        if (from > to) {
+          return { intent: 'quiz_grade', reply: `范围有误：${from} 大于 ${to}，请重新输入。`, action: 'answer_key_skip_invalid' };
+        }
+        const deleted = this.db.skipAnswerKeyQuestions({
+          userId,
+          answerKeyId: context.answer_key_id,
+          fromNumber: from,
+          toNumber: to,
+        });
+        const keyData = this.db.getAnswerKeyWithQuestions({ userId, answerKeyId: context.answer_key_id });
+        const remaining = keyData ? keyData.questions.length : 0;
+        return {
+          intent: 'quiz_grade',
+          reply: `已跳过第 ${from}-${to} 题（删除了 ${deleted} 题，当前共 ${remaining} 题）。\n确认无误请说"没问题"。`,
+          action: 'answer_key_skipped',
         };
       }
 
