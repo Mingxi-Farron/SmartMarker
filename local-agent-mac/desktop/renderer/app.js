@@ -1134,7 +1134,7 @@
         upsertPending('正在上传作文照片...', sessionId);
         const upload = await window.desktopApi.uploadImages({ filePaths: imageFiles });
         setPendingUploadId(sessionId, upload.upload_id);
-        const pagesMatch = message.match(/每(?:篇|人|份)(\d+)(?:页|张)/);
+        const pagesMatch = text.match(/每(?:篇|人|份)(\d+)(?:页|张)/);
         const pagesPerEssay = pagesMatch ? parseInt(pagesMatch[1], 10) : 1;
         const studentEst = Math.floor(imageFiles.length / pagesPerEssay);
         const rem = imageFiles.length % pagesPerEssay;
@@ -1142,7 +1142,7 @@
         if (rem !== 0) hint += `\n⚠️ ${imageFiles.length} 张不是 ${pagesPerEssay} 的整数倍，最后一位学生可能缺页。`;
         appendMessage({ sessionId, role: 'system', content: hint });
         const chatPayload = {
-          message: message || '批量批改作文',
+          message: text || '批量批改作文',
           session_id: sessionId || undefined,
           upload_id: upload.upload_id,
         };
